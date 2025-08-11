@@ -4,9 +4,7 @@ from typing import List, Dict
 import streamlit as st
 from supabase import create_client, Client
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Page & Config
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="AI Environment Provisioning Portal", page_icon="🧭", layout="centered")
 
 def sget(*keys, default=None):
@@ -28,7 +26,7 @@ SUPABASE_KEY = sget("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY", "SUPABASE_
 @st.cache_resource
 def get_sb() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("Missing Supabase config. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or ANON) in .streamlit/secrets.toml")
+        st.error("Missing Supabase config. Add SUPABASE_URL and SERVICE_ROLE/ANON key in .streamlit/secrets.toml")
         st.stop()
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -38,7 +36,7 @@ def get_sb() -> Client:
 
 sb = get_sb()
 
-# Quick health check
+# Health check
 try:
     sb.table("environment").select("*").limit(1).execute()
     st.caption("✅ Connected to Supabase.")
@@ -46,11 +44,8 @@ except Exception as e:
     st.error(f"DB check failed. Did you run the DDL? Error: {e}")
     st.stop()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Data helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Data helpers ──────────────────────────────────────────────────────────────
 def authenticate(username: str, pwd: str):
-    """Demo auth: matches teams.username + teams.pwd (plaintext)."""
     resp = sb.table("teams").select("*").eq("username", username).eq("pwd", pwd).execute()
     if resp.data:
         return resp.data[0]
@@ -68,27 +63,29 @@ def load_artifact_types() -> List[Dict]:
 def load_artifacts_by_type(artifact_type_id: int) -> List[Dict]:
     return sb.table("artifacts").select("*").eq("artifact_type_id", artifact_type_id).order("artifact_name").execute().data
 
-def create_selection_batch(team_id: int, environment_id: int, username: str) -> int:
-    """
-    Insert header row and return selection_key.
-    Works across supabase-py versions by using `returning="representation"`.
-    """
+@st.cache_data(ttl=60)
+def load_target_runtimes() -> List[Dict]:
+    # Make sure you've created the target_runtime table per the DDL we discussed
+    return sb.table("target_runtime").select("*").order("target_runtime_id").execute().data
+
+def create_selection_batch(team_id: int, environment_id: int, username: str, target_runtime_id: int) -> int:
+    """Insert header row (with target runtime) and return selection_key."""
     resp = (
         sb.table("team_selection_batch")
-          .insert(
-              {
-                  "team_id": team_id,
-                  "environment_id": environment_id,
-                  "insrt_user_name": username,
-              },
-              returning="representation"   # <-- key change
-          )
-          .execute()
+        .insert(
+            {
+                "team_id": team_id,
+                "environment_id": environment_id,
+                "insrt_user_name": username,
+                "target_runtime_id": target_runtime_id,
+            },
+            returning="representation"  # ensures inserted row is returned
+        )
+        .execute()
     )
     if not resp.data or not isinstance(resp.data, list):
         raise RuntimeError(f"Insert did not return a row: {resp}")
     return int(resp.data[0]["selection_key"])
-
 
 def save_detail(selection_key: int, artifact_type_id: int, artifact_id: int):
     sb.table("team_selection_detail").insert({
@@ -97,9 +94,7 @@ def save_detail(selection_key: int, artifact_type_id: int, artifact_id: int):
         "artifact_id": artifact_id
     }).execute()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# UI
-# ──────────────────────────────────────────────────────────────────────────────
+# ── UI ────────────────────────────────────────────────────────────────────────
 st.title("🧭 AI Environment Provisioning Portal")
 st.caption("Select approved components and provision standardized environments in minutes.")
 
@@ -133,11 +128,24 @@ st.write(
 )
 st.divider()
 
-# Environment
+# Environment dropdown
 envs = load_environments()
 env_options = {e["environment_name"].upper(): e["environment_id"] for e in envs}
 env_label = st.selectbox("Select Environment", list(env_options.keys()))
 environment_id = env_options[env_label]
+
+# Target runtime dropdown (the bit you asked for)
+try:
+    runtimes = load_target_runtimes()
+    if not runtimes:
+        st.warning("No target runtimes found. Did you insert rows into target_runtime?")
+        st.stop()
+    rt_options = {r["target_runtime"].upper(): r["target_runtime_id"] for r in runtimes}
+    rt_label = st.selectbox("Target Environment", list(rt_options.keys()))
+    target_runtime_id = rt_options[rt_label]
+except Exception as e:
+    st.error(f"Failed to load target runtimes: {e}")
+    st.stop()
 
 st.subheader("Select Approved Artifacts (one from each)")
 
@@ -160,24 +168,24 @@ for at in artifact_types:
     )
     picks[at_id] = options.get(selection) if selection != "-- choose --" else None
 
-# Must pick all four
+# Must pick all types
 all_chosen = all(picks.get(at["artifact_type_id"]) for at in artifact_types)
 
 col_l, col_r = st.columns([1, 1])
 
-# Save button → header + 4 details with same selection_key
+# Save button → header (with runtime) + details with same selection_key
 if col_l.button("📦 Save Selection", type="primary", disabled=not all_chosen):
     try:
-        selection_key = create_selection_batch(user["team_id"], environment_id, user["username"])
+        selection_key = create_selection_batch(user["team_id"], environment_id, user["username"], target_runtime_id)
         for at in artifact_types:
             at_id = at["artifact_type_id"]
             art_id = picks.get(at_id)
             save_detail(selection_key, at_id, art_id)
-        st.success(f"Saved selections under selection_key **{selection_key}** for **{env_label}** ✅")
+        st.success(f"Saved under selection_key **{selection_key}** for **{env_label} / {rt_label}** ✅")
     except Exception as e:
         st.error(f"Save failed: {e}")
 
-# History via the flat view
+# History (optional; relies on v_team_selection_flat view if you created it)
 with col_r.expander("📜 View My Past Selections"):
     try:
         resp = (
