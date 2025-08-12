@@ -1,0 +1,8 @@
+{
+  "team_env": "team_1_dev",
+  "env_name": "dev",
+  "runtime": "java",
+  "selection_key": 10,
+  "table_prefix": "team_1_dev_",
+  "storage_prefix": "team_1_dev/"
+}

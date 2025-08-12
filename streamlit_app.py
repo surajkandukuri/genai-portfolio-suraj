@@ -1,6 +1,10 @@
 # streamlit_app.py
 import os
 from typing import List, Dict
+from pathlib import Path
+from textwrap import dedent
+import json
+
 import streamlit as st
 from supabase import create_client, Client
 
@@ -44,7 +48,166 @@ except Exception as e:
     st.error(f"DB check failed. Did you run the DDL? Error: {e}")
     st.stop()
 
-# ── Data helpers ──────────────────────────────────────────────────────────────
+# ── Minimal helpers ───────────────────────────────────────────────────────────
+
+def host_port_for(env_name: str, runtime_name: str) -> int:
+    # pick a distinct host port per environment
+    by_env = {"dev": 8510, "qa": 8511, "prod": 8512}
+    # fallback if env isn't in the map
+    return by_env.get(env_name.lower(), 8519)
+
+
+def slugify(s: str) -> str:
+    import re
+    s = re.sub(r'[^a-zA-Z0-9_]+', '_', s.strip().lower())
+    return f"a_{s}" if not s or not s[0].isalpha() else s
+
+def team_env_slug(team_name: str, env_name: str) -> str:
+    return f"{slugify(team_name)}_{slugify(env_name)}"
+
+def default_port(runtime_name: str) -> int:
+    return {"django":8000, "flask":8501, ".net":8080, "java":8080, "python":8001}.get(runtime_name.lower(), 8501)
+
+def provision_workspace(selection_key: int, team_name: str, env_name: str, runtime_name: str):
+    """
+    Creates apps/<team_env>/ with manifest, docker-compose.yml, README, minimal runnable app.
+    Returns (repo_path, host_port).
+    """
+    # Always run the tiny Streamlit app on 8501 inside the container
+    container_port = 8501
+
+    # Distinct host port per environment to avoid clashing with the portal
+    env_port_map = {"dev": 8510, "qa": 8511, "prod": 8512}
+    host_port = env_port_map.get(env_name.lower(), 8519)
+
+    team_env = team_env_slug(team_name, env_name)
+    table_prefix = f"{team_env}_"
+    storage_prefix = f"{team_env}/"
+
+    repo_path = f"apps/{team_env}"
+    ws_dir = Path(repo_path)
+    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    # Manifest
+    manifest = {
+        "team_env": team_env,
+        "env_name": env_name.lower(),
+        "runtime": runtime_name.lower(),
+        "selection_key": selection_key,
+        "table_prefix": table_prefix,
+        "storage_prefix": storage_prefix,
+    }
+    (ws_dir / "provisional_success_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+
+    # Minimal app + Dockerfile
+    (ws_dir / "requirements.txt").write_text("streamlit\n", encoding="utf-8")
+    (ws_dir / "app.py").write_text(dedent(f"""
+        import os, json, streamlit as st
+        st.set_page_config(page_title="ProvisionalSuccessfulTestAgent", page_icon="✅", layout="centered")
+        st.title("✅ ProvisionalSuccessfulTestAgent")
+        try:
+            data = json.loads(open("provisional_success_manifest.json").read())
+            st.subheader("Workspace Manifest"); st.json(data, expanded=False)
+        except Exception as e:
+            st.warning(f"Manifest not found: {{e}}")
+        st.write("Zero-key demo: environment is alive.")
+        st.caption(f"TEAM_ENV={{os.getenv('TEAM_ENV')}} • TABLE_PREFIX={{os.getenv('TABLE_PREFIX')}} • STORAGE_PREFIX={{os.getenv('STORAGE_PREFIX')}}")
+    """).strip()+"\n", encoding="utf-8")
+
+    (ws_dir / "Dockerfile").write_text(dedent(f"""
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        EXPOSE {container_port}
+        CMD ["streamlit", "run", "app.py", "--server.port={container_port}", "--server.address=0.0.0.0"]
+    """).strip()+"\n", encoding="utf-8")
+
+    # docker-compose.yml (host → container)
+    (ws_dir / "docker-compose.yml").write_text(dedent(f"""
+        services:
+          app:
+            build:
+              context: .
+              dockerfile: Dockerfile
+            container_name: {team_env}
+            ports:
+              - "{host_port}:{container_port}"
+            environment:
+              TEAM_ENV: "{team_env}"
+              TABLE_PREFIX: "{table_prefix}"
+              STORAGE_PREFIX: "{storage_prefix}"
+    """).strip()+"\n", encoding="utf-8")
+
+    # README
+    (ws_dir / "README.md").write_text(dedent(f"""
+        # {team_env} — Workspace Starter
+
+        **Environment:** {env_name}
+        **Runtime:** {runtime_name}
+        **Selection Key:** {selection_key}
+        **Tables Prefix:** `{table_prefix}`
+        **Storage Prefix:** `{storage_prefix}`
+        **Folder:** `{repo_path}`
+
+        ## Run
+        ```bash
+        cd {repo_path}
+        docker compose up -d
+        ```
+        Open: http://localhost:{host_port}
+    """).strip()+"\n", encoding="utf-8")
+
+    return repo_path, host_port
+
+
+
+def next_unprovisioned_selection(team_id: int):
+    """
+    Returns newest selection (max selection_key) with provision_done_ind='N',
+    plus env/runtime labels for provisioning.
+    """
+    res = (
+        sb.table("team_selection_batch")
+          .select("selection_key, environment_id, target_runtime_id")
+          .eq("team_id", team_id)
+          .eq("provision_done_ind", "N")
+          .order("selection_key", desc=True)
+          .limit(1)
+          .execute()
+          .data
+    )
+    if not res:
+        return None
+    batch = res[0]
+
+    env = (
+        sb.table("environment")
+          .select("environment_name")
+          .eq("environment_id", batch["environment_id"])
+          .single()
+          .execute()
+          .data
+    )
+    rt = (
+        sb.table("target_runtime")
+          .select("target_runtime")
+          .eq("target_runtime_id", batch["target_runtime_id"])
+          .single()
+          .execute()
+          .data
+    )
+    return {
+        "selection_key": batch["selection_key"],
+        "env_name": env["environment_name"].lower(),
+        "runtime_name": (rt["target_runtime"] or "").lower(),
+        "rt_label": (rt["target_runtime"] or "").upper(),
+    }
+
+# ── Data helpers (DB) ─────────────────────────────────────────────────────────
 def authenticate(username: str, pwd: str):
     resp = sb.table("teams").select("*").eq("username", username).eq("pwd", pwd).execute()
     if resp.data:
@@ -65,7 +228,6 @@ def load_artifacts_by_type(artifact_type_id: int) -> List[Dict]:
 
 @st.cache_data(ttl=60)
 def load_target_runtimes() -> List[Dict]:
-    # Make sure you've created the target_runtime table per the DDL we discussed
     return sb.table("target_runtime").select("*").order("target_runtime_id").execute().data
 
 def create_selection_batch(team_id: int, environment_id: int, username: str, target_runtime_id: int) -> int:
@@ -78,8 +240,9 @@ def create_selection_batch(team_id: int, environment_id: int, username: str, tar
                 "environment_id": environment_id,
                 "insrt_user_name": username,
                 "target_runtime_id": target_runtime_id,
+                # provision_done_ind has DEFAULT 'N' in the DB
             },
-            returning="representation"  # ensures inserted row is returned
+            returning="representation"
         )
         .execute()
     )
@@ -128,13 +291,20 @@ st.write(
 )
 st.divider()
 
+# If session missing, auto-load newest unprovisioned
+if "last_selection" not in st.session_state:
+    pending = next_unprovisioned_selection(user["team_id"])
+    if pending:
+        st.session_state["last_selection"] = pending
+
 # Environment dropdown
 envs = load_environments()
 env_options = {e["environment_name"].upper(): e["environment_id"] for e in envs}
 env_label = st.selectbox("Select Environment", list(env_options.keys()))
 environment_id = env_options[env_label]
+env_name_lc = env_label.lower()
 
-# Target runtime dropdown (the bit you asked for)
+# Target runtime dropdown
 try:
     runtimes = load_target_runtimes()
     if not runtimes:
@@ -143,6 +313,7 @@ try:
     rt_options = {r["target_runtime"].upper(): r["target_runtime_id"] for r in runtimes}
     rt_label = st.selectbox("Target Environment", list(rt_options.keys()))
     target_runtime_id = rt_options[rt_label]
+    runtime_name = rt_label.lower()
 except Exception as e:
     st.error(f"Failed to load target runtimes: {e}")
     st.stop()
@@ -181,6 +352,14 @@ if col_l.button("📦 Save Selection", type="primary", disabled=not all_chosen):
             at_id = at["artifact_type_id"]
             art_id = picks.get(at_id)
             save_detail(selection_key, at_id, art_id)
+
+        # store minimal data for provisioning step
+        st.session_state["last_selection"] = {
+            "selection_key": selection_key,
+            "env_name": env_name_lc,
+            "runtime_name": runtime_name,
+            "rt_label": rt_label
+        }
         st.success(f"Saved under selection_key **{selection_key}** for **{env_label} / {rt_label}** ✅")
     except Exception as e:
         st.error(f"Save failed: {e}")
@@ -212,6 +391,37 @@ with col_r.expander("📜 View My Past Selections"):
             ])
     except Exception as e:
         st.warning(f"Could not load history view: {e}")
+
+st.divider()
+
+# ── Provision: pick latest 'N' and mark 'Y' after success ─────────────────────
+st.subheader("Provision")
+if st.button("🚀 Provision Now", type="primary"):
+    # If session doesn't have it, fall back to the newest unprovisioned row
+    sel = st.session_state.get("last_selection") or next_unprovisioned_selection(user["team_id"])
+    if not sel:
+        st.info("No unprovisioned selections found. Save a new selection first.")
+        st.stop()
+
+    # Create ready-to-run workspace
+    repo_path, port = provision_workspace(
+        sel["selection_key"],
+        user["team_name"],
+        sel["env_name"],
+        sel["runtime_name"],
+    )
+
+    # Flip to provisioned = 'Y'
+    try:
+        sb.table("team_selection_batch") \
+          .update({"provision_done_ind": "Y"}) \
+          .eq("selection_key", sel["selection_key"]) \
+          .execute()
+        st.success(f"Provisioned and marked selection_key {sel['selection_key']} as 'Y' ✅")
+    except Exception as e:
+        st.warning(f"Workspace created, but failed to mark provisioned: {e}")
+
+    st.code(f"cd {repo_path}\ndocker compose up -d\n# open http://localhost:{port}", language="bash")
 
 st.divider()
 if st.button("Sign out"):

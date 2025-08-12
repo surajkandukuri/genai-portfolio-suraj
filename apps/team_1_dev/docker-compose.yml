@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: team_1_dev
+    ports:
+      - "8510:8080"   # host:container
+    environment:
+      TEAM_ENV: "team_1_dev"
+      TABLE_PREFIX: "team_1_dev_"
+      STORAGE_PREFIX: "team_1_dev/"

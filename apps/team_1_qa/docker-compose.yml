@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: team_1_qa
+    ports:
+      - "8511:8501"
+    environment:
+      TEAM_ENV: "team_1_qa"
+      TABLE_PREFIX: "team_1_qa_"
+      STORAGE_PREFIX: "team_1_qa/"
