@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: centralized_team_dev
+    ports:
+      - "8510:8501"
+    environment:
+      TEAM_ENV: "centralized_team_dev"
+      TABLE_PREFIX: "centralized_team_dev_"
+      STORAGE_PREFIX: "centralized_team_dev/"
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
