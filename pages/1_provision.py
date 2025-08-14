@@ -8,9 +8,17 @@ from textwrap import dedent
 
 import streamlit as st
 from supabase import create_client, Client
+from provisioning.ui import inject_styles, card, render_sidebar
+from provisioning.ui import inject_styles, card
+
 
 # ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Provision", page_icon="📦", layout="centered")
+
+
+inject_styles()
+
+render_sidebar("Provision")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 def sget(*keys, default=None):
@@ -274,28 +282,29 @@ st.title("📦 Provision")
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# Login
+# Login (styled)
 if st.session_state.user is None:
-    st.subheader("Login")
-    with st.form("login_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        username = col1.text_input("Username", placeholder="team_1")
-        pwd = col2.text_input("Password", type="password", placeholder="••••••")
-        submitted = st.form_submit_button("Sign in")
-    if submitted:
-        user = authenticate(username.strip(), pwd)
-        if user:
-            st.session_state.user = user
-            st.success(f"Welcome, {user['team_name']}! 👋")
-            st.rerun()
-        else:
-            st.error("Invalid credentials. Please try again.")
+    with card("Login"):
+        with st.form("login_form", clear_on_submit=False):
+            col1, col2 = st.columns(2)
+            username = col1.text_input("Username", placeholder="team_1")
+            pwd = col2.text_input("Password", type="password", placeholder="••••••")
+            submitted = st.form_submit_button("Sign in")
+        if submitted:
+            user = authenticate(username.strip(), pwd)
+            if user:
+                st.session_state.user = user
+                st.success(f"Welcome, {user['team_name']}! 👋")
+                st.rerun()
+            else:
+                st.error("Invalid credentials. Please try again.")
     st.stop()
 
 # After login
 user = st.session_state.user
-st.write(f"**Team:** {user['team_name']} • **POC:** {user.get('team_pointofcontact') or '—'} • **DL:** {user.get('team_distributionlist') or '—'} • **User:** {user['username']}")
-st.divider()
+with card("Team Context"):
+    st.write(f"**Team:** {user['team_name']} • **POC:** {user.get('team_pointofcontact') or '—'} • "
+             f"**DL:** {user.get('team_distributionlist') or '—'} • **User:** {user['username']}")
 
 # If session missing, auto-load newest unprovisioned
 if "last_selection" not in st.session_state:
@@ -303,115 +312,119 @@ if "last_selection" not in st.session_state:
     if pending:
         st.session_state["last_selection"] = pending
 
-# Environment dropdown
+# Target selectors (styled)
 envs = load_environments()
 env_options = {e["environment_name"].upper(): e["environment_id"] for e in envs}
-env_label = st.selectbox("Select Environment", list(env_options.keys()))
-environment_id = env_options[env_label]
-env_name_lc = env_label.lower()
+with card("Target"):
+    colA, colB = st.columns(2)
+    env_label = colA.selectbox("Select Environment", list(env_options.keys()))
+    environment_id = env_options[env_label]
+    env_name_lc = env_label.lower()
 
-# Target runtime dropdown
-try:
-    runtimes = load_target_runtimes()
-    if not runtimes:
-        st.warning("No target runtimes found. Did you insert rows into target_runtime?")
+    try:
+        runtimes = load_target_runtimes()
+        if not runtimes:
+            st.warning("No target runtimes found. Did you insert rows into target_runtime?")
+            st.stop()
+        rt_options = {r["target_runtime"].upper(): r["target_runtime_id"] for r in runtimes}
+        rt_label = colB.selectbox("Target Environment", list(rt_options.keys()))
+        target_runtime_id = rt_options[rt_label]
+        runtime_name = rt_label.lower()
+    except Exception as e:
+        st.error(f"Failed to load target runtimes: {e}")
         st.stop()
-    rt_options = {r["target_runtime"].upper(): r["target_runtime_id"] for r in runtimes}
-    rt_label = st.selectbox("Target Environment", list(rt_options.keys()))
-    target_runtime_id = rt_options[rt_label]
-    runtime_name = rt_label.lower()
-except Exception as e:
-    st.error(f"Failed to load target runtimes: {e}")
-    st.stop()
 
-st.subheader("Select Approved Artifacts (one from each)")
-artifact_types = load_artifact_types()
-
-# Build one dropdown per artifact type
-picks = {}
-for at in artifact_types:
-    at_id = at["artifact_type_id"]
-    at_name = at["artifact_type"]
-    data = load_artifacts_by_type(at_id)
-    options = {row["artifact_name"]: row["artifact_id"] for row in data}
-    if not options:
-        st.warning(f"No artifacts configured for **{at_name}** yet.")
-        continue
-    selection = st.selectbox(f"{at_name.title()}", ["-- choose --"] + list(options.keys()), key=f"sb_{at_id}")
-    picks[at_id] = options.get(selection) if selection != "-- choose --" else None
+# Artifact selection (styled)
+with card("Select Approved Artifacts (one from each)"):
+    artifact_types = load_artifact_types()
+    picks = {}
+    for at in artifact_types:
+        at_id = at["artifact_type_id"]
+        at_name = at["artifact_type"]
+        data = load_artifacts_by_type(at_id)
+        options = {row["artifact_name"]: row["artifact_id"] for row in data}
+        if not options:
+            st.warning(f"No artifacts configured for **{at_name}** yet.")
+            continue
+        selection = st.selectbox(f"{at_name.title()}", ["-- choose --"] + list(options.keys()), key=f"sb_{at_id}")
+        picks[at_id] = options.get(selection) if selection != "-- choose --" else None
 
 # Must pick all types
-all_chosen = all(picks.get(at["artifact_type_id"]) for at in artifact_types)
+all_chosen = all(picks.get(at["artifact_type_id"]) for at in artifact_types) if artifact_types else False
 
-col_l, col_r = st.columns([1, 1])
+# Save + History (styled)
+with card("Save Selection & History"):
+    col_l, col_r = st.columns([1, 1])
 
-# Save button → header + details with same selection_key
-def create_selection_batch(team_id: int, environment_id: int, username: str, target_runtime_id: int) -> int:
-    resp = (sb.table("team_selection_batch").insert(
-        {"team_id": team_id, "environment_id": environment_id, "insrt_user_name": username, "target_runtime_id": target_runtime_id},
-        returning="representation"
-    ).execute())
-    if not resp.data or not isinstance(resp.data, list):
-        raise RuntimeError(f"Insert did not return a row: {resp}")
-    return int(resp.data[0]["selection_key"])
+    def create_selection_batch(team_id: int, environment_id: int, username: str, target_runtime_id: int) -> int:
+        resp = (sb.table("team_selection_batch").insert(
+            {"team_id": team_id, "environment_id": environment_id, "insrt_user_name": username, "target_runtime_id": target_runtime_id},
+            returning="representation"
+        ).execute())
+        if not resp.data or not isinstance(resp.data, list):
+            raise RuntimeError(f"Insert did not return a row: {resp}")
+        return int(resp.data[0]["selection_key"])
 
-def save_detail(selection_key: int, artifact_type_id: int, artifact_id: int):
-    sb.table("team_selection_detail").insert({
-        "selection_key": selection_key, "artifact_type_id": artifact_type_id, "artifact_id": artifact_id
-    }).execute()
+    def save_detail(selection_key: int, artifact_type_id: int, artifact_id: int):
+        sb.table("team_selection_detail").insert({
+            "selection_key": selection_key, "artifact_type_id": artifact_type_id, "artifact_id": artifact_id
+        }).execute()
 
-if col_l.button("📦 Save Selection", type="primary", disabled=not all_chosen):
-    try:
-        selection_key = create_selection_batch(user["team_id"], environment_id, user["username"], target_runtime_id)
-        for at in artifact_types:
-            at_id = at["artifact_type_id"]
-            art_id = picks.get(at_id)
-            save_detail(selection_key, at_id, art_id)
+    with col_l:
+        if st.button("📦 Save Selection", type="primary", disabled=not all_chosen):
+            try:
+                selection_key = create_selection_batch(user["team_id"], environment_id, user["username"], target_runtime_id)
+                for at in artifact_types:
+                    at_id = at["artifact_type_id"]
+                    art_id = picks.get(at_id)
+                    save_detail(selection_key, at_id, art_id)
 
-        st.session_state["last_selection"] = {
-            "selection_key": selection_key, "env_name": env_name_lc, "runtime_name": runtime_name, "rt_label": rt_label
-        }
-        st.success(f"Saved under selection_key **{selection_key}** for **{env_label} / {rt_label}** ✅")
-    except Exception as e:
-        st.error(f"Save failed: {e}")
+                st.session_state["last_selection"] = {
+                    "selection_key": selection_key, "env_name": env_name_lc,
+                    "runtime_name": runtime_name, "rt_label": rt_label
+                }
+                st.success(f"Saved under selection_key **{selection_key}** for **{env_label} / {rt_label}** ✅")
+            except Exception as e:
+                st.error(f"Save failed: {e}")
 
-with col_r.expander("📜 View My Past Selections"):
-    try:
-        resp = (sb.table("v_team_selection_flat").select("*")
-                .eq("team_id", user["team_id"]).order("selection_key", desc=True).limit(100).execute())
-        rows = resp.data or []
-        if not rows:
-            st.info("No selections yet.")
-        else:
-            st.write([
-                {"selection_key": r["selection_key"], "when": r["insrt_dttm"], "environment": r["environment_name"],
-                 "type": r["artifact_type_name"], "artifact": r["artifact_name"], "by": r["insrt_user_name"]}
-                for r in rows
-            ])
-    except Exception as e:
-        st.warning(f"Could not load history view: {e}")
+    with col_r:
+        with st.expander("📜 View My Past Selections", expanded=False):
+            try:
+                resp = (sb.table("v_team_selection_flat").select("*")
+                        .eq("team_id", user["team_id"]).order("selection_key", desc=True).limit(100).execute())
+                rows = resp.data or []
+                if not rows:
+                    st.info("No selections yet.")
+                else:
+                    st.write([
+                        {"selection_key": r["selection_key"], "when": r["insrt_dttm"], "environment": r["environment_name"],
+                         "type": r["artifact_type_name"], "artifact": r["artifact_name"], "by": r["insrt_user_name"]}
+                        for r in rows
+                    ])
+            except Exception as e:
+                st.warning(f"Could not load history view: {e}")
 
-st.divider()
+# Provision (styled)
+with card("Provision"):
+    st.write("Generate a Docker-ready workspace for your latest selection.")
+    if st.button("🚀 Provision Now", type="primary"):
+        sel = st.session_state.get("last_selection") or next_unprovisioned_selection(user["team_id"])
+        if not sel:
+            st.info("No unprovisioned selections found. Save a new selection first.")
+            st.stop()
 
-# Provision
-st.subheader("Provision")
-if st.button("🚀 Provision Now", type="primary"):
-    sel = st.session_state.get("last_selection") or next_unprovisioned_selection(user["team_id"])
-    if not sel:
-        st.info("No unprovisioned selections found. Save a new selection first.")
-        st.stop()
+        repo_path, port = provision_workspace(sel["selection_key"], user["team_name"], sel["env_name"], sel["runtime_name"])
 
-    repo_path, port = provision_workspace(sel["selection_key"], user["team_name"], sel["env_name"], sel["runtime_name"])
+        try:
+            sb.table("team_selection_batch").update({"provision_done_ind": "Y"}).eq("selection_key", sel["selection_key"]).execute()
+            st.success(f"Provisioned and marked selection_key {sel['selection_key']} as 'Y' ✅")
+        except Exception as e:
+            st.warning(f"Workspace created, but failed to mark provisioned: {e}")
 
-    try:
-        sb.table("team_selection_batch").update({"provision_done_ind": "Y"}).eq("selection_key", sel["selection_key"]).execute()
-        st.success(f"Provisioned and marked selection_key {sel['selection_key']} as 'Y' ✅")
-    except Exception as e:
-        st.warning(f"Workspace created, but failed to mark provisioned: {e}")
+        st.code(f"cd {repo_path}\ndocker compose up -d\n# open http://localhost:{port}", language="bash")
 
-    st.code(f"cd {repo_path}\ndocker compose up -d\n# open http://localhost:{port}", language="bash")
-
-st.divider()
-if st.button("Sign out"):
-    st.session_state.user = None
-    st.rerun()
+# Footer (styled)
+with card("Session"):
+    if st.button("Sign out"):
+        st.session_state.user = None
+        st.rerun()
