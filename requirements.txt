@@ -5,3 +5,4 @@ uvicorn[standard]
 supabase
 groq
 python-dotenv
+playwright
