@@ -1,4 +1,4 @@
-# pages/1_Provision.py
+# pages/1_provision.py
 import os
 import json
 import stat
@@ -7,18 +7,15 @@ from pathlib import Path
 from textwrap import dedent
 
 import streamlit as st
-from supabase import create_client, Client
-from provisioning.ui import inject_styles, card, render_sidebar
-from provisioning.ui import inject_styles, card
+from supabase import create_client, Client  # keep if you use Supabase later
 
+# ✅ Our modular theme + components
+from provisioning.theme import page_setup, page_header
+from provisioning.ui import card
 
-# ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Provision", page_icon="📦", layout="centered")
-
-
-inject_styles()
-
-render_sidebar("Provision")
+# ── Page bootstrap: theme + sidebar (active highlight) ────────────────────────
+page_setup(active="Provision")
+page_header("PROVISION", "Generate a Docker-ready AI workspace from approved presets.")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 def sget(*keys, default=None):
@@ -276,7 +273,6 @@ def load_target_runtimes() -> List[Dict]:
     return sb.table("target_runtime").select("*").order("target_runtime_id").execute().data
 
 # ── UI ────────────────────────────────────────────────────────────────────────
-st.title("📦 Provision")
 
 # Session user
 if "user" not in st.session_state:
@@ -303,8 +299,10 @@ if st.session_state.user is None:
 # After login
 user = st.session_state.user
 with card("Team Context"):
-    st.write(f"**Team:** {user['team_name']} • **POC:** {user.get('team_pointofcontact') or '—'} • "
-             f"**DL:** {user.get('team_distributionlist') or '—'} • **User:** {user['username']}")
+    st.write(
+        f"**Team:** {user['team_name']} • **POC:** {user.get('team_pointofcontact') or '—'} • "
+        f"**DL:** {user.get('team_distributionlist') or '—'} • **User:** {user['username']}"
+    )
 
 # If session missing, auto-load newest unprovisioned
 if "last_selection" not in st.session_state:
@@ -337,7 +335,7 @@ with card("Target"):
 # Artifact selection (styled)
 with card("Select Approved Artifacts (one from each)"):
     artifact_types = load_artifact_types()
-    picks = {}
+    picks: Dict[int, int | None] = {}
     for at in artifact_types:
         at_id = at["artifact_type_id"]
         at_name = at["artifact_type"]
@@ -346,7 +344,11 @@ with card("Select Approved Artifacts (one from each)"):
         if not options:
             st.warning(f"No artifacts configured for **{at_name}** yet.")
             continue
-        selection = st.selectbox(f"{at_name.title()}", ["-- choose --"] + list(options.keys()), key=f"sb_{at_id}")
+        selection = st.selectbox(
+            f"{at_name.title()}",
+            ["-- choose --"] + list(options.keys()),
+            key=f"sb_{at_id}",
+        )
         picks[at_id] = options.get(selection) if selection != "-- choose --" else None
 
 # Must pick all types
@@ -357,10 +359,14 @@ with card("Save Selection & History"):
     col_l, col_r = st.columns([1, 1])
 
     def create_selection_batch(team_id: int, environment_id: int, username: str, target_runtime_id: int) -> int:
-        resp = (sb.table("team_selection_batch").insert(
-            {"team_id": team_id, "environment_id": environment_id, "insrt_user_name": username, "target_runtime_id": target_runtime_id},
-            returning="representation"
-        ).execute())
+        resp = (
+            sb.table("team_selection_batch")
+              .insert(
+                  {"team_id": team_id, "environment_id": environment_id, "insrt_user_name": username, "target_runtime_id": target_runtime_id},
+                  returning="representation"
+              )
+              .execute()
+        )
         if not resp.data or not isinstance(resp.data, list):
             raise RuntimeError(f"Insert did not return a row: {resp}")
         return int(resp.data[0]["selection_key"])
@@ -380,8 +386,10 @@ with card("Save Selection & History"):
                     save_detail(selection_key, at_id, art_id)
 
                 st.session_state["last_selection"] = {
-                    "selection_key": selection_key, "env_name": env_name_lc,
-                    "runtime_name": runtime_name, "rt_label": rt_label
+                    "selection_key": selection_key,
+                    "env_name": env_name_lc,
+                    "runtime_name": runtime_name,
+                    "rt_label": rt_label,
                 }
                 st.success(f"Saved under selection_key **{selection_key}** for **{env_label} / {rt_label}** ✅")
             except Exception as e:
@@ -390,15 +398,27 @@ with card("Save Selection & History"):
     with col_r:
         with st.expander("📜 View My Past Selections", expanded=False):
             try:
-                resp = (sb.table("v_team_selection_flat").select("*")
-                        .eq("team_id", user["team_id"]).order("selection_key", desc=True).limit(100).execute())
+                resp = (
+                    sb.table("v_team_selection_flat")
+                      .select("*")
+                      .eq("team_id", user["team_id"])
+                      .order("selection_key", desc=True)
+                      .limit(100)
+                      .execute()
+                )
                 rows = resp.data or []
                 if not rows:
                     st.info("No selections yet.")
                 else:
                     st.write([
-                        {"selection_key": r["selection_key"], "when": r["insrt_dttm"], "environment": r["environment_name"],
-                         "type": r["artifact_type_name"], "artifact": r["artifact_name"], "by": r["insrt_user_name"]}
+                        {
+                            "selection_key": r["selection_key"],
+                            "when": r["insrt_dttm"],
+                            "environment": r["environment_name"],
+                            "type": r["artifact_type_name"],
+                            "artifact": r["artifact_name"],
+                            "by": r["insrt_user_name"],
+                        }
                         for r in rows
                     ])
             except Exception as e:

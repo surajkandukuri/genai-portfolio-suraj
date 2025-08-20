@@ -1,0 +1,33 @@
+INFO:     Started server process [25496]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:7000 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [25496]
+INFO:     Started server process [6592]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:7000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:64564 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64567 - "GET /agents/provisioning-checks/health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52909 - "GET /agents/psta/health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52915 - "GET /agents/psta/health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52917 - "POST /agents/psta/generate HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:58501 - "GET /checks/health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:58506 - "GET /agents/postprovision/try HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [6592]
+INFO:     Started server process [12588]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:7000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51455 - "GET /checks/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51459 - "GET /agents/postprovision/try HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51474 - "GET /agents/sample-menu?cuisine=Japanese HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64973 - "GET /agents/postprovision/try HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64983 - "GET /agents/postprovision/try HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64999 - "GET /agents/sample-menu?cuisine=Mexican HTTP/1.1" 200 OK
