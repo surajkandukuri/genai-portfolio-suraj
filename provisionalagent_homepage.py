@@ -1,44 +1,32 @@
-# provisionalagent_homepage.py
 import streamlit as st
-from provisioning.theme import page_setup, hero
-from provisioning.ui import card
 
-def main() -> None:
-    # Theme + sidebar (active highlights "Home")
-    page_setup(active="Home")
+st.set_page_config(page_title="ProvisionAgent", layout="wide")
 
-    # Landing hero (matches your mock)
-    hero(
-        title_html="AI ENVIRONMENT<br/>PROVISIONING PORTAL",
-        tagline="One-click, multi-team AI environment setup",
-        cta_text="Provision Now",
-        cta_page="pages/1_provision.py",  # must match your actual Provision page path
+st.title("AI ENVIRONMENT PROVISIONING PORTAL")
+st.caption("One-click, multi-team AI environment setup")
+
+# CTA → go to pages/1_provision.py
+if st.button("Provision Now", use_container_width=False):
+    st.switch_page("pages/1_provision.py")
+
+# (Your cards/sections)
+left, right = st.columns(2)
+with left:
+    st.subheader("Problem Statement")
+    st.markdown(
+        "- Multiple teams, fragmented stacks, manual provisioning\n"
+        "- Lack of standardized governance and audit gaps\n"
+        "- “It’s all in Docker” visibility needing a human‑readable map"
+    )
+with right:
+    st.subheader("What This Tool Solves")
+    st.markdown(
+        "- One‑click standardized envs with pre‑approved options\n"
+        "- Built‑in governance: policy packs, RBAC, audit trails"
     )
 
-    # Two info cards
-    col1, col2 = st.columns(2)
-    with col1:
-        with card("Problem Statement"):
-            st.markdown(
-                "• Multiple teams, fragmented stacks, manual provisioning  \n"
-                "• Lack of standardized governance and audit gaps  \n"
-                "• “It’s all in Docker” visibility → need a human-readable map"
-            )
-    with col2:
-        with card("What This Tool Solves"):
-            st.markdown(
-                "• One-click standardized environments with pre-approved options  \n"
-                "• Built-in governance: policy packs, RBAC, audit trails"
-            )
-
-    # Feature trio
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        st.subheader("🚀 Rapid Deployment");  st.caption("From request to production in minutes.")
-    with f2:
-        st.subheader("🛡️ Governance-Ready"); st.caption("Approvals, policy packs, auditability.")
-    with f3:
-        st.subheader("🌿 Full Visibility");   st.caption("Track deployments by lean app status.")
-
-if __name__ == "__main__":
-    main()
+st.divider()
+c1, c2, c3 = st.columns(3)
+c1.markdown("### 🚀 Rapid Deployment\nFrom request to production in minutes.")
+c2.markdown("### 🛡️ Governance‑Ready\nApprovals, policy packs, auditability.")
+c3.markdown("### 🌿 Full Visibility\nTrack deployments by lean app status.")

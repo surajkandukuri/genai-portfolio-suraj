@@ -9,12 +9,10 @@ from textwrap import dedent
 import streamlit as st
 from supabase import create_client, Client  # keep if you use Supabase later
 
-# ✅ Our modular theme + components
-from provisioning.theme import page_setup, page_header
+from provisioning.theme import page_header
 from provisioning.ui import card
 
-# ── Page bootstrap: theme + sidebar (active highlight) ────────────────────────
-page_setup(active="Provision")
+st.set_page_config(page_title="Provision", layout="wide")
 page_header("PROVISION", "Generate a Docker-ready AI workspace from approved presets.")
 
 # ── Config helpers ────────────────────────────────────────────────────────────

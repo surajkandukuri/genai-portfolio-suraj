@@ -4,13 +4,25 @@ import os
 import requests
 import streamlit as st
 from provisioning.theme import page_setup, page_header
-from provisioning.ui import card
 from provisioning.autostart_api import ensure_fastapi
+
+import streamlit as st
+from supabase import create_client, Client  # keep if you use Supabase later
+
+from provisioning.theme import page_header
+from provisioning.ui import card
+
+st.set_page_config(page_title="Console", layout="wide")
+page_header("ADMIN — CONSOLE", "Runtime checks, gateway status & post-provision agents")
+
+'''
+from provisioning.ui import card
+
 
 # Bootstrap page (theme + sidebar)
 page_setup(active="Console")
 page_header("ADMIN — CONSOLE", "Runtime checks, gateway status & post-provision agents.")
-
+'''
 # Determine API base URL from the autostart info (or env override)
 api = ensure_fastapi()  # cached; won't start twice
 base_url = os.getenv("PA_API_BASE_URL") or api.get("url") or "http://127.0.0.1:7000"

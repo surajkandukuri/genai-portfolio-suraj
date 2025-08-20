@@ -5,13 +5,13 @@ import pandas as pd
 from supabase import create_client, Client
 from provisioning.ui import inject_styles, card, render_sidebar
 from provisioning.ui import inject_styles, card
+from provisioning.theme import page_header
+from provisioning.ui import card
 
 # ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Admin — Reports", page_icon="📊", layout="centered")
-inject_styles()
-render_sidebar("Reports")
-st.title("📊 Admin — Reports")
-st.caption("Deployed artifacts & provisioning history.")
+page_header("Deployed artifacts & provisioning history.")
+
 
 # ── Config / Supabase ────────────────────────────────────────────────────────
 def sget(*keys, default=None):

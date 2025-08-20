@@ -6,12 +6,14 @@ from supabase import create_client, Client
 from provisioning.ui import inject_styles, card, render_sidebar
 from provisioning.ui import inject_styles, card
 
+from provisioning.theme import page_header
+from provisioning.ui import card
+
 # ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Admin — Artifacts", page_icon="🧩", layout="centered")
-inject_styles()
-render_sidebar("Artifacts")
-st.title("🧩 Admin — Artifacts")
-st.caption("Browse approved artifacts by type; quick search & details.")
+page_header("Browse approved artifacts by type; quick search & details.")
+
+
 
 # ── Config / Supabase ────────────────────────────────────────────────────────
 def sget(*keys, default=None):
