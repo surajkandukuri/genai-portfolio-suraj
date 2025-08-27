@@ -1,4 +1,9 @@
 import streamlit as st
+import sys, asyncio
+import platform 
+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 st.set_page_config(page_title="GenAI Portfolio", layout="wide")
 

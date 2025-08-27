@@ -58,3 +58,18 @@ INFO:     127.0.0.1:64954 - "GET /agents/postprovision/try HTTP/1.1" 200 OK
 INFO:     127.0.0.1:60420 - "GET /checks/health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57384 - "GET /agents/sample-menu?cuisine=Indian HTTP/1.1" 200 OK
 INFO:     127.0.0.1:56076 - "GET /agents/sample-menu?cuisine=Italian HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13064]
+INFO:     Started server process [8760]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:7000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50065 - "GET /gateway/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49943 - "GET /checks/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55581 - "GET /agents/sample-menu?cuisine=Mexican HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8760]

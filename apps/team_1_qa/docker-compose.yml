@@ -10,3 +10,6 @@ services:
       TEAM_ENV: "team_1_qa"
       TABLE_PREFIX: "team_1_qa_"
       STORAGE_PREFIX: "team_1_qa/"
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

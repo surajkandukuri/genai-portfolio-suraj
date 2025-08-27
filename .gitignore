@@ -1,2 +1,7 @@
 myenv/
 Steps.docx/
+screenshots/
+playwright_test
+
+.vscode/
+__pycache__/

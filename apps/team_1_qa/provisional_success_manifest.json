@@ -1,8 +1,8 @@
 {
   "team_env": "team_1_qa",
   "env_name": "qa",
-  "runtime": "java",
-  "selection_key": 11,
+  "runtime": ".net",
+  "selection_key": 15,
   "table_prefix": "team_1_qa_",
   "storage_prefix": "team_1_qa/"
 }

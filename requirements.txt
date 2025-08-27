@@ -5,4 +5,6 @@ uvicorn[standard]
 supabase
 groq
 python-dotenv
-playwright
+playwright >=1.45
+streamlit >=1.32
+pillow
