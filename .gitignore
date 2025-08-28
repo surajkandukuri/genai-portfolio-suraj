@@ -2,6 +2,6 @@ myenv/
 Steps.docx/
 screenshots/
 playwright_test
-
+.streamlit/
 .vscode/
 __pycache__/

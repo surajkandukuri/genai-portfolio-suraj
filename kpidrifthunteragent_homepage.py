@@ -9,6 +9,12 @@ st.caption("One-click, multi-team KPI Drift hunter across BI Platforms")
 if st.button("Run the Scan", use_container_width=False):
     st.switch_page("pages/21_kpidrift_runthescan.py")
 
+# CTA → go to pages/1_provision.py
+if st.button("Extract Widgets", use_container_width=False):
+    st.switch_page("pages/22_kpidrift_widgetextractor.py")
+
+
+
 # (Your cards/sections)
 left, right = st.columns(2)
 with left:

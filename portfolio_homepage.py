@@ -28,6 +28,8 @@ provision  = st.Page("pages/1_provision.py",         title="Provision",       ic
 kpi_drift  = st.Page("kpidrifthunteragent_homepage.py", title="KPI Drift Hunter", icon=":material/analytics:")
 # KPI Drift Hunter Agent child
 kpi_drift_run = st.Page("pages/21_kpidrift_runthescan.py", title="Run the Scan", icon=":material/play_circle:") 
+#KPI Widget Extractor child
+kpi_drift_run = st.Page("pages/22_kpidrift_widgetextractor.py", title="Widget Extractor", icon=":material/play_circle:") 
 
 # Admin children
 console    = st.Page("pages/2_admin.py",             title="Console",         icon=":material/terminal:")
