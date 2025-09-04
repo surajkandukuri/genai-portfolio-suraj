@@ -386,5 +386,7 @@ def main():
     manifest = capture_all(url=args.url, outdir=outdir, viewport=(w,h), headed=args.headed, max_widgets=args.max)
     print("\nSummary:", json.dumps({k:v for k,v in manifest.items() if k != "widgets"}, indent=2))
 
+
+
 if __name__ == "__main__":
     main()
