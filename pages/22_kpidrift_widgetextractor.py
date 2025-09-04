@@ -12,6 +12,7 @@ from typing import List, Dict, Tuple, Optional
 
 import streamlit as st
 import pandas as pd
+import requests
 from supabase import create_client, Client
 from PIL import Image, ImageDraw
 
@@ -63,7 +64,7 @@ def storage_signed_url(bucket: str, key: str, ttl_sec=3600) -> str:
     return sb.storage.from_(bucket).create_signed_url(_key_only(bucket, key), ttl_sec)["signedURL"]
 
 def storage_upload_bytes(bucket: str, key: str, data: bytes, content_type="image/png") -> None:
-    # IMPORTANT: 'upsert' must be a STRING ("true"/"false"), not bool, as the client maps it into HTTP headers.
+    # NOTE: 'upsert' must be STRING ("true"/"false")
     options = {"contentType": content_type, "upsert": "true"}
     sb.storage.from_(bucket).upload(_key_only(bucket, key), data, options)
 
@@ -78,7 +79,6 @@ def load_recent_screengrabs(limit=200):
           .execute()
     )
     rows = q.data or []
-    # Add signed URLs for thumbnail display
     for r in rows:
         try:
             r["thumb_url"] = storage_signed_url(KDH_BUCKET, r["storage_path_full"], ttl_sec=3600)
@@ -94,9 +94,8 @@ if not rows:
 
 # Build a selection table using st.data_editor
 df = pd.DataFrame(rows)
-df["Select"] = False  # checkbox column
+df["Select"] = False
 
-# Column config to show images nicely
 st.subheader("Recent Screengrabs")
 edited = st.data_editor(
     df[["Select", "thumb_url", "url", "platform", "captured_at", "screengrab_id", "storage_path_full"]],
@@ -118,7 +117,7 @@ edited = st.data_editor(
 selected = edited[edited["Select"] == True]  # noqa: E712
 
 st.divider()
-c1, c2, c3 = st.columns([1,1,6])
+c1, c2, _ = st.columns([1,1,6])
 extract_btn = c1.button("▶️ Extract", type="primary", use_container_width=True, disabled=selected.empty)
 refresh_btn = c2.button("↻ Refresh", use_container_width=True)
 
@@ -126,14 +125,12 @@ if refresh_btn:
     st.cache_data.clear()
     st.rerun()
 
-# ── Animated extraction UX helpers ───────────────────────────────────────────
+# ── Visual helpers ───────────────────────────────────────────────────────────
 def overlay_boxes_on_image(img_bytes: bytes, boxes: List[Tuple[int,int,int,int]]) -> bytes:
-    """Draw rectangle outlines on an image; return PNG bytes."""
     im = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
     draw = ImageDraw.Draw(im, "RGBA")
     for (x, y, w, h) in boxes:
-        # Outline rectangle; 3px width
-        for off in range(3):
+        for off in range(2):
             draw.rectangle([x-off, y-off, x+w+off, y+h+off], outline=(0, 0, 0, 255))
     out = io.BytesIO()
     im.save(out, format="PNG")
@@ -142,74 +139,91 @@ def overlay_boxes_on_image(img_bytes: bytes, boxes: List[Tuple[int,int,int,int]]
 def sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
-# ── Minimal extractor (provider-agnostic heuristics) ─────────────────────────
-# NOTE: This is a pragmatic extractor good enough for public Power BI/Tableau embeds.
-# It captures multiple likely chart areas inside the first visible <iframe>.
-
+# ── Minimal extractor (provider-agnostic with Power BI focus) ─────────────────
 @with_browser(headless=True, scale=2.0, viewport=(1920, 1080))
 def extract_widgets(ctx, url: str, screengrab_id: str, full_key: str, session_prefix: str) -> Dict:
     """
-    Returns a dict with:
-    {
-      "widget_count": int,
-      "crops": List[{"bytes": ..., "path": ..., "bbox": [x,y,w,h]}],
-      "overlays_key": "<path to overlays.png>",
-    }
+    Returns:
+      {
+        "widget_count": int,
+        "crops": [{"bytes": ..., "path": ..., "bbox": [x,y,w,h], "label": "..."}],
+        "overlays_key": "<path/to/overlays.png>",
+      }
     """
     page = ctx.new_page()
     page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(1200)
 
-    # Find primary iframe
+    # Find primary iframe (Power BI/Tableau embeds). We'll query inside it,
+    # BUT element.bounding_box() is already in main-page coords. Do NOT add iframe offset.
+    main_frame = page
     iframes = page.locator("iframe")
-    if iframes.count() == 0:
-        # Fallback: treat top page as the visual container
-        frame = page
-        frame_offset = (0, 0)
-    else:
-        fr = iframes.first
-        fr.wait_for(timeout=15_000)
-        box = fr.bounding_box() or {"x":0,"y":0}
-        frame_offset = (int(box["x"]), int(box["y"]))
-        frame = fr.content_frame()
-        if frame is None:
-            # Try a moment later
-            page.wait_for_timeout(1000)
-            frame = fr.content_frame()
-            if frame is None:
-                frame = page
-                frame_offset = (0, 0)
+    if iframes.count() > 0:
+        try:
+            fr = iframes.first
+            fr.wait_for(timeout=15_000)
+            cf = fr.content_frame()
+            if cf:  # use the content frame for querying
+                main_frame = cf
+        except Exception:
+            pass
 
-    # Candidate selectors across BI tools
-    CANDIDATES = [
-        "canvas", "svg", "[role='img']", "[role='figure']",
-        ".visualContainer", ".visualContainerHost", ".modernVisualOverlay",
-        ".tab-worksheet", ".tab-viz", ".tabCanvas", ".chart", ".highcharts-container"
+    # Do a quick inventory scroll to trigger lazy visuals (inside frame if present)
+    try:
+        scrollable = main_frame.evaluate("() => ({ h: document.documentElement.scrollHeight, vh: window.innerHeight })")
+        total_h = int(scrollable.get("h", 0) or 0)
+        vh = int(scrollable.get("vh", 0) or 800)
+        steps = [0]
+        # step ~70% viewport height up to 3 passes
+        pos = vh
+        while pos < total_h and len(steps) < 4:
+            steps.append(pos)
+            pos += int(vh * 0.7)
+        for s in steps:
+            main_frame.evaluate(f"window.scrollTo(0, {s});")
+            page.wait_for_timeout(600)
+    except Exception:
+        pass  # harmless
+
+    # Selector priority: containers → a11y roles → drawing surfaces
+    SELECTOR_GROUPS = [
+        # Power BI containers (capture whole visual incl. title)
+        (".visualContainer, .visualContainerHost, .modernVisualOverlay", "container"),
+        # A11y wrappers
+        ("[role='figure'], [role='img']", "role"),
+        # Tableau containers
+        (".tab-worksheet, .tab-viz, .tabCanvas", "tableau"),
+        # Drawing primitives (fallback)
+        ("svg, canvas", "primitive"),
     ]
 
-    found = []
-    for sel in CANDIDATES:
+    MIN_W, MIN_H = 150, 100    # less conservative so slim charts aren't skipped
+    PAD = 12                   # pad crops to include titles/axes
+
+    candidates: List[Tuple[str, str, Tuple[int,int,int,int]]] = []  # (selector, kind, box)
+
+    for sel, kind in SELECTOR_GROUPS:
         try:
-            loc = frame.locator(sel)
-            n = min(12, loc.count())  # limit to avoid over-cropping
+            loc = main_frame.locator(sel)
+            count = loc.count()
+            n = min(20, count)  # cap per selector
             for i in range(n):
                 el = loc.nth(i)
                 try:
                     bb = el.bounding_box()
                     if not bb:
                         continue
-                    x, y, w, h = int(bb["x"]), int(bb["y"]), int(bb["width"]), int(bb["height"])
-                    if w < 220 or h < 160:
+                    x, y = int(bb["x"]), int(bb["y"])
+                    w, h = int(bb["width"]), int(bb["height"])
+                    if w < MIN_W or h < MIN_H:
                         continue
-                    # Store absolute coords (page level) by adding iframe offset
-                    abs_box = (x + frame_offset[0], y + frame_offset[1], w, h)
-                    found.append((sel, abs_box))
+                    candidates.append((sel, kind, (x, y, w, h)))
                 except Exception:
                     continue
         except Exception:
             continue
 
-    # Deduplicate by overlap (simple IoU) and keep outermost-ish
+    # Deduplicate by IoU, but allow parent+child if kinds differ (e.g., container vs canvas)
     def iou(a, b) -> float:
         ax, ay, aw, ah = a
         bx, by, bw, bh = b
@@ -221,64 +235,100 @@ def extract_widgets(ctx, url: str, screengrab_id: str, full_key: str, session_pr
         ua = aw*ah + bw*bh - inter
         return inter / max(1, ua)
 
-    kept: List[Tuple[str, Tuple[int,int,int,int]]] = []
-    for sel, box in found:
-        if any(iou(box, kb) > 0.7 for _, kb in kept):
-            continue
-        kept.append((sel, box))
+    kept: List[Tuple[str, str, Tuple[int,int,int,int]]] = []
+    for sel, kind, box in sorted(candidates, key=lambda c: (c[2][1], c[2][0])):  # top→bottom, left→right
+        drop = False
+        for _, k_kind, k_box in kept:
+            overlap = iou(box, k_box)
+            # If heavy overlap and same "kind", drop; if kinds differ, allow (keeps container + canvas)
+            if overlap > 0.7 and k_kind == kind:
+                drop = True
+                break
+        if not drop:
+            kept.append((sel, kind, box))
 
-    # Sort top->bottom for nicer UX
-    kept.sort(key=lambda kv: (kv[1][1], kv[1][0]))
-
-    # Download full.png for overlay previews
+    # Download full.png (for overlay + PIL crops)
     full_signed = storage_signed_url(KDH_BUCKET, full_key, ttl_sec=3600)
-    import requests  # allowed in Streamlit runtime
     full_img_bytes = requests.get(full_signed, timeout=20).content
+    full_im = Image.open(io.BytesIO(full_img_bytes)).convert("RGBA")
+    W, H = full_im.size
 
-    crops_for_db: List[Dict] = []
-    overlay_boxes: List[Tuple[int,int,int,int]] = []
-
-    # Clip/screenshot from the live page for sharper crops
+    # Persistent live log instead of collapsing st.status
+    log = st.container()
     prog = st.progress(0, text="Scanning widgets…")
-    step = 0
+    overlay_boxes: List[Tuple[int,int,int,int]] = []
+    crops_for_db: List[Dict] = []
+
     total = max(1, len(kept))
+    log.write(f"Found **{len(kept)}** candidates after de-dup.")
 
-    with st.status("Extracting widgets…", expanded=True) as status:
-        st.write(f"Found **{len(kept)}** candidates. Cropping and saving…")
+    # Helper to pad & clamp boxes
+    def pad_clamp(x, y, w, h, pad=PAD):
+        x2, y2 = x + w, y + h
+        x_p = max(0, x - pad)
+        y_p = max(0, y - pad)
+        x2_p = min(W, x2 + pad)
+        y2_p = min(H, y2 + pad)
+        return x_p, y_p, x2_p - x_p, y2_p - y_p
 
-        for idx, (sel, (x, y, w, h)) in enumerate(kept, start=1):
-            # Animate: update progress + overlay
-            overlay_boxes.append((x, y, w, h))
-            overlay_img = overlay_boxes_on_image(full_img_bytes, overlay_boxes)
-            st.image(overlay_img, caption=f"Overlay after {idx} crops", use_container_width=True)
+    # Optional: find a nearby title above the box (Power BI)
+    def find_title_text(box: Tuple[int,int,int,int]) -> Optional[str]:
+        try:
+            # Query elements likely to contain titles; filter by vertical proximity
+            title_nodes = main_frame.locator(".visualTitle, [role='heading'], h1, h2, h3, h4, h5, h6")
+            count = min(10, title_nodes.count())
+            bx, by, bw, bh = box
+            mid_x = bx + bw // 2
+            closest = None
+            best_dy = 99999
+            for i in range(count):
+                t = title_nodes.nth(i)
+                tb = t.bounding_box()
+                if not tb:
+                    continue
+                tx, ty, tw, th = int(tb["x"]), int(tb["y"]), int(tb["width"]), int(tb["height"])
+                # vertically above and horizontally overlapping somewhat
+                if ty < by and (tx < (bx + bw) and (tx + tw) > bx):
+                    dy = by - ty
+                    if dy < 160 and dy < best_dy:
+                        txt = t.inner_text() or ""
+                        txt = txt.strip()
+                        if txt:
+                            best_dy = dy
+                            closest = txt
+            return closest
+        except Exception:
+            return None
 
-            # Do the actual crop via page.screenshot(clip=…)
-            try:
-                clip = {"x": x, "y": y, "width": w, "height": h}
-                png_path = f"{session_prefix}/widgets/widget_{idx:02d}.png"
-                # Take a crisp screenshot directly from the page
-                page.screenshot(path=None, clip=clip)
-                # Playwright can't return bytes directly here, so re-screenshot area via DOM element when possible
-                # Fallback to PIL crop from full image:
-                im = Image.open(io.BytesIO(full_img_bytes)).convert("RGBA")
-                crop_im = im.crop((x, y, x+w, y+h))
-                out = io.BytesIO()
-                crop_im.save(out, format="PNG")
-                crop_bytes = out.getvalue()
+    for idx, (sel, kind, (x, y, w, h)) in enumerate(kept, start=1):
+        # Pad box to include titles/axes
+        px, py, pw, ph = pad_clamp(x, y, w, h, pad=PAD)
+        overlay_boxes.append((px, py, pw, ph))
+        # Update animated overlay preview (keeps log visible)
+        if idx == 1 or idx % 2 == 0:
+            st.image(overlay_boxes_on_image(full_img_bytes, overlay_boxes),
+                     caption=f"Overlay after {idx} crops",
+                     use_container_width=True)
 
-                # Upload + stage for DB
-                storage_upload_bytes(KDH_BUCKET, png_path, crop_bytes, content_type="image/png")
-                crops_for_db.append({"bytes": crop_bytes, "path": png_path, "bbox": [x, y, w, h]})
-                st.write(f"✅ Saved widget {idx} ({w}×{h}) from `{sel}`")
-            except Exception as e:
-                st.write(f"⚠️ Skipped a candidate from `{sel}`: {e}")
+        # Crop via PIL (stable & fast)
+        crop_im = full_im.crop((px, py, px+pw, py+ph))
+        bio = io.BytesIO()
+        crop_im.save(bio, format="PNG")
+        crop_bytes = bio.getvalue()
 
-            step += 1
-            prog.progress(min(step/total, 1.0))
+        # Try to capture a nearby title
+        label = find_title_text((x, y, w, h)) or ""
 
-        status.update(label="Extraction complete", state="complete")
+        png_path = f"{session_prefix}/widgets/widget_{idx:02d}.png"
+        storage_upload_bytes(KDH_BUCKET, png_path, crop_bytes, content_type="image/png")
+        crops_for_db.append({"bytes": crop_bytes, "path": png_path, "bbox": [px, py, pw, ph], "label": label})
 
-    # Save an overlays.png for QA
+        log.write(f"✅ {idx}/{total} — kept `{kind}` from `{sel}` ({w}×{h})"
+                  + (f" — **{label}**" if label else ""))
+
+        prog.progress(min(idx/total, 1.0))
+
+    # Save overlays.png
     overlays_key = f"{session_prefix}/widgets/overlays.png"
     storage_upload_bytes(KDH_BUCKET, overlays_key, overlay_boxes_on_image(full_img_bytes, overlay_boxes))
 
@@ -294,13 +344,11 @@ if extract_btn:
         st.warning("Select at least one screengrab row to extract.")
         st.stop()
 
-    for i, row in selected.iterrows():
+    for _, row in selected.iterrows():
         with st.container(border=True):
             st.subheader(f"Extracting: {row['platform']} — {row['url']}")
             try:
-                # Build session-specific prefix under the same day bucket hierarchy as page 21
-                # Reuse the existing storage path to keep things grouped
-                full_key = row["storage_path_full"]  # e.g., kpidrifthunter/2025/08/27/<session>/<slug>/full.png
+                full_key = row["storage_path_full"]  # e.g., .../<session>/<slug>/full.png
                 base_prefix = "/".join(full_key.split("/")[:-1])  # drop 'full.png'
                 session_prefix = base_prefix
 
@@ -311,22 +359,23 @@ if extract_btn:
                     session_prefix=session_prefix
                 )
 
-                # Insert widget rows into DB using existing helper
+                # Persist widget rows
                 if res["crops"]:
                     insert_widgets(
                         sb,
                         screengrab_id=row["screengrab_id"],
                         storage_bucket=KDH_BUCKET,
-                        crops=res["crops"],
+                        crops=[{k: v for k, v in c.items() if k in {"bytes","path","bbox"}}],  # DB helper expects these keys
                     )
                 st.success(f"Extracted {res['widget_count']} widget(s).")
-                st.link_button("Open overlays.png", storage_signed_url(KDH_BUCKET, res["overlays_key"]), use_container_width=False)
+                st.link_button("Open overlays.png",
+                               storage_signed_url(KDH_BUCKET, res["overlays_key"]),
+                               use_container_width=False)
 
             except Exception as e:
                 tb = traceback.format_exc()
                 st.error(f"Failed to extract for {row['url']}\n\n{e}\n\n```traceback\n{tb}\n```")
 
-    # Refresh the page data so you can run again
     st.toast("Done! Refreshing list…", icon="✅")
     time.sleep(1.2)
     st.cache_data.clear()
