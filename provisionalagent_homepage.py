@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.set_page_config(page_title="ProvisionAgent", layout="wide")
+#st.set_page_config(page_title="ProvisionAgent", layout="wide")
 
 st.title("AI ENVIRONMENT PROVISIONING PORTAL")
 st.caption("One-click, multi-team AI environment setup")

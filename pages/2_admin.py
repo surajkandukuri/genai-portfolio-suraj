@@ -12,7 +12,7 @@ from supabase import create_client, Client  # keep if you use Supabase later
 from provisioning.theme import page_header
 from provisioning.ui import card
 
-st.set_page_config(page_title="Console", layout="wide")
+#st.set_page_config(page_title="Console", layout="wide")
 page_header("ADMIN — CONSOLE", "Runtime checks, gateway status & post-provision agents")
 
 '''

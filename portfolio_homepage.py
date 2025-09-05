@@ -1,4 +1,7 @@
 import streamlit as st
+#st.set_page_config(page_title="GenAI Portfolio", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
+
+
 import sys, asyncio
 import platform 
 
