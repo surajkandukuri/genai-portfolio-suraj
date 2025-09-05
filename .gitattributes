@@ -1,0 +1,17 @@
+# --- text files must be LF in the repo & in your working tree
+*.py      text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.env     text eol=lf
+*.sh      text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+
+# --- binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.pdf     binary

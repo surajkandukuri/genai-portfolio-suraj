@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.set_page_config(page_title="KPI Drift Hunter", layout="wide")
+#st.set_page_config(page_title="KPI Drift Hunter", layout="wide")
 
 st.title("KPI Drift Hunter Agent")
 st.caption("One-click, multi-team KPI Drift hunter across BI Platforms")

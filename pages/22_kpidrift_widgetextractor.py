@@ -22,7 +22,7 @@ from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import insert_widgets,
 from provisioning.a2_kpidrift_capture.a2_kpidrift_types import Artifacts, CaptureResult
 
 # ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="KPI Drift — Widget Extractor", page_icon="🧩", layout="wide")
+#st.set_page_config(page_title="KPI Drift — Widget Extractor", page_icon="🧩", layout="wide")
 st.title("🧩 KPI Drift — Widget Extractor")
 st.caption("Pick one or more screengrabs (full.png) and extract per-chart widgets with animated progress.")
 

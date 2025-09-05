@@ -10,7 +10,7 @@ from provisioning.theme import page_header
 from provisioning.ui import card
 
 # ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Admin — Artifacts", page_icon="🧩", layout="centered")
+#st.set_page_config(page_title="Admin — Artifacts", page_icon="🧩", layout="centered")
 page_header("Browse approved artifacts by type; quick search & details.")
 
 

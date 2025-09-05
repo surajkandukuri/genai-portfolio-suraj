@@ -30,7 +30,7 @@ from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import (
 )
 
 # ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="KPI Drift Hunter — Run the Scan", layout="wide")
+#st.set_page_config(page_title="KPI Drift Hunter — Run the Scan", layout="wide")
 page_header(
     "KPI Drift Hunter — Run the Scan",
     "Paste two BI report URLs → capture full-page + widget crops → store in Supabase."

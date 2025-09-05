@@ -5,7 +5,7 @@ from provisioning.theme import page_header
 from provisioning.ui import card
 
 # ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Logout", page_icon="🚪", layout="centered")
+#st.set_page_config(page_title="Logout", page_icon="🚪", layout="centered")
 page_header("This will clear your session")
 
 

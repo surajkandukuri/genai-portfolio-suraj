@@ -9,7 +9,7 @@ from provisioning.theme import page_header
 from provisioning.ui import card
 
 # ── Page setup ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Admin — Reports", page_icon="📊", layout="centered")
+#st.set_page_config(page_title="Admin — Reports", page_icon="📊", layout="centered")
 page_header("Deployed artifacts & provisioning history.")
 
 
