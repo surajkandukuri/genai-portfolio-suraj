@@ -1,76 +1,263 @@
 # pages/22_kpidrift_widgetextractor.py
+# Streamlit page that extracts widget crops EXACTLY like playwright_test.py:
+# - crops via Playwright page.screenshot(clip=...) from the live DOM
+# - filenames: {platform}_{reportName}_{widgetTitle}_{idx}.png
+# - saves locally to ./screenshots/{session}/{slug}/widgets/ (no Supabase writes yet)
+
 from __future__ import annotations
 
-# ---- Windows asyncio fix (must be before Playwright is used) ----
-import platform, asyncio
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-import os, re, io, hashlib, traceback, time
+# ── Standard imports
+import os, re, io, time, json
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 import pandas as pd
-import requests
-from supabase import create_client, Client
-from PIL import Image, ImageDraw
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PWError
 
-# Reuse engine helpers
-from provisioning.a2_kpidrift_capture.a2_kpidrift_engine import with_browser, ensure_outdir, nowstamp
-from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import insert_widgets, image_wh
-from provisioning.a2_kpidrift_capture.a2_kpidrift_types import Artifacts, CaptureResult
-
-# ── Page setup ────────────────────────────────────────────────────────────────
-#st.set_page_config(page_title="KPI Drift — Widget Extractor", page_icon="🧩", layout="wide")
+# ──────────────────────────────────────────────────────────────────────────────
+# If another page already calls set_page_config(), comment the next line out.
+st.set_page_config(page_title="KPI Drift — Widget Extractor", page_icon="🧩", layout="wide")
 st.title("🧩 KPI Drift — Widget Extractor")
-st.caption("Pick one or more screengrabs (full.png) and extract per-chart widgets with animated progress.")
+st.caption("Select screengrabs and extract per-chart crops. This build saves to ./screenshots locally for verification.")
 
-# ── Config helpers ────────────────────────────────────────────────────────────
-def sget(*keys, default=None):
+# ========== Small helpers (same spirit as the CLI) ==========
+def _nowstamp() -> str:
+    from datetime import datetime
+    return datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+def _ensure_outdir(p: Path) -> Path:
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+def _sanitize_filename(s: str, max_len: int = 100) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"[^\w\-. ]+", "_", s)
+    s = re.sub(r"\s+", "_", s)
+    return (s[:max_len] or "untitled").rstrip("._-")
+
+def _detect_platform(url: str) -> str:
+    u = (url or "").lower()
+    if "powerbi.com" in u: return "powerbi"
+    if "tableau" in u:     return "tableau"
+    return "unknown"
+
+_BAD_EXACT = {
+    "microsoft power bi","power bi","view report","report","dashboard","sign in",
+    "home","sheet","show filters","navigating to visual","use ctrl","press ctrl",
+    "press enter","skip to report","skip to main content"
+}
+_BAD_SUBSTR = ["navigating to visual","use ctrl","press ctrl","keyboard shortcut","skip to report","skip to main content","aria-live"]
+
+def _non_generic(txt: str) -> bool:
+    low = (txt or "").strip().lower()
+    if not low or low in _BAD_EXACT: return False
+    if any(sub in low for sub in _BAD_SUBSTR): return False
+    return True
+
+def _sanitize_vendor_title(s: str) -> str:
+    s = re.sub(r"\s*[-|]\s*Microsoft\s*Power\s*BI.*$", "", s, flags=re.I)
+    s = re.sub(r"\s*-\s*Power\s*BI.*$", "", s, flags=re.I)
+    s = re.sub(r"\s*-\s*Tableau.*$", "", s, flags=re.I)
+    return s.strip()
+
+def _pick_best_text(cands: List[str]) -> Optional[str]:
+    scored = []
+    for raw in cands:
+        if not raw: continue
+        t = raw.strip()
+        if not _non_generic(t): continue
+        score = len(t) + (3 if " " in t else 0)
+        scored.append((score, t))
+    if not scored: return None
+    scored.sort(reverse=True)
+    return scored[0][1]
+
+def _guess_title_by_style(frame, top_px: int = 380) -> Optional[str]:
+    try:
+        nodes = frame.evaluate(
+            """(topLimit) => {
+              const take = [];
+              const w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+              while (w.nextNode()) {
+                const el = w.currentNode;
+                if (!el) continue;
+                const cs = getComputedStyle(el);
+                if (cs.visibility==='hidden'||cs.display==='none'||parseFloat(cs.opacity||'1')<0.1) continue;
+                const r = el.getBoundingClientRect();
+                if (!r || !r.width || !r.height) continue;
+                if (r.top > topLimit) continue;
+                const text = (el.innerText||'').trim();
+                if (!text || text.length < 4) continue;
+                const size = parseFloat(cs.fontSize||'0');
+                const weight = (cs.fontWeight||'').toString();
+                take.push({ text, size: isNaN(size)?0:size, weight: /^(700|800|900|bold)$/i.test(weight)?1:0, top:r.top });
+              }
+              return take;
+            }""",
+            top_px
+        )
+        scored = []
+        for n in nodes or []:
+            t = (n.get("text") or "").strip()
+            if not t or not _non_generic(t): continue
+            size = float(n.get("size", 0)); bold = int(n.get("weight", 0)); top = float(n.get("top", 9999.0))
+            score = size*3 + bold*5 - top*0.01 + (3 if " " in t else 0)
+            scored.append((score, t))
+        if not scored: return None
+        scored.sort(reverse=True)
+        return scored[0][1]
+    except Exception:
+        return None
+
+def _detect_report_name(page, frame) -> Tuple[str, Dict]:
+    """Return (report_name, debug_info) using the same priority as CLI + heuristic."""
+    candidates: List[Tuple[str, str]] = []
+    dbg: Dict = {"iframe": {}, "headers": [], "active_tabs": [], "meta": {}, "picked": None, "heuristic": None}
+    def add(src: str, val: Optional[str]):
+        if not val: return
+        t = (val or "").strip()
+        if not t: return
+        candidates.append((src, t))
+
+    # iframe title / aria-label
+    try:
+        ifr = page.locator("iframe").first
+        if ifr.count():
+            t = ifr.get_attribute("title"); a = ifr.get_attribute("aria-label")
+            dbg["iframe"] = {"title": t, "aria-label": a}
+            add("iframe@title", t); add("iframe@aria-label", a)
+    except Exception: pass
+
+    # in-frame header titles
+    try:
+        for sel in ["[data-testid='report-header-title']",
+                    "[data-testid='report-header'] [data-testid='title']",
+                    ".reportTitle",".vcHeaderTitle"]:
+            loc = frame.locator(sel)
+            n = min(8, loc.count())
+            for i in range(n):
+                try:
+                    role = (loc.nth(i).get_attribute("role") or "").lower()
+                    if "status" in role: continue
+                    txt = (loc.nth(i).inner_text() or "").strip()
+                    dbg["headers"].append({"sel": sel, "text": txt, "role": role})
+                    add(f"header:{sel}", txt)
+                except Exception: pass
+    except Exception: pass
+
+    # ACTIVE tab only
+    try:
+        for sel in ["[aria-label='Pages Navigation'] [role='tab'][aria-selected='true']",
+                    "[role='tablist'] [role='tab'][aria-selected='true']",
+                    "[role='tab'][aria-current='page']",
+                    ".tab-toolbar .tab-title.active",
+                    ".tab-sheet-tab[aria-selected='true']"]:
+            loc = frame.locator(sel)
+            n = min(4, loc.count())
+            for i in range(n):
+                try:
+                    txt = (loc.nth(i).inner_text() or "").strip()
+                    dbg["active_tabs"].append({"sel": sel, "text": txt})
+                    add(f"active-tab:{sel}", txt)
+                except Exception: pass
+    except Exception: pass
+
+    # page/meta titles
+    try:
+        og = page.locator("meta[property='og:title']").first
+        tw = page.locator("meta[name='twitter:title']").first
+        pt = _sanitize_vendor_title(page.title() or "")
+        if og and og.count():
+            v = _sanitize_vendor_title(og.get_attribute("content") or ""); dbg["meta"]["og:title"] = v; add("og:title", v)
+        if tw and tw.count():
+            v = _sanitize_vendor_title(tw.get_attribute("content") or ""); dbg["meta"]["twitter:title"] = v; add("twitter:title", v)
+        if pt: dbg["meta"]["<title>"] = pt; add("<title>", pt)
+    except Exception: pass
+
+    explicit = _pick_best_text([t for _, t in candidates])
+    if explicit:
+        dbg["picked"] = {"source":"explicit","text":explicit}
+        return _sanitize_filename(explicit), dbg
+
+    # heuristic: largest top text
+    guess = _guess_title_by_style(frame, top_px=380)
+    if guess and _non_generic(guess):
+        dbg["heuristic"] = guess
+        dbg["picked"]   = {"source":"largest-top-text","text":guess}
+        return _sanitize_filename(guess), dbg
+
+    # fallback: URL segment (avoid 'view')
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(page.url or "")
+        seg = (p.path or "").rstrip("/").split("/")[-1]
+        if (seg or "").lower() == "view": seg = ""
+        name = _sanitize_filename(seg or (p.netloc or "report"))
+        dbg["picked"] = {"source":"url-fallback","text":name}
+        return name, dbg
+    except Exception:
+        return "report", {"picked":{"source":"exception","text":"report"}}
+
+def _iou(a: Tuple[int,int,int,int], b: Tuple[int,int,int,int]) -> float:
+    ax, ay, aw, ah = a; bx, by, bw, bh = b
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2, y2 = min(ax+aw, bx+bw), min(ay+ah, by+bh)
+    inter = max(0, x2-x1) * max(0, y2-y1)
+    if inter == 0: return 0.0
+    ua = aw*ah + bw*bh - inter
+    return inter / max(1, ua)
+
+def _find_title_near(frame, box: Tuple[int,int,int,int]) -> Optional[str]:
+    try:
+        bx, by, bw, bh = box
+        sel = ".visualTitle, .visualHeaderTitleText, [role='heading'], h1, h2, h3, h4, h5, h6"
+        loc = frame.locator(sel)
+        n = min(20, loc.count())
+        closest, best_dy = None, 99999
+        for i in range(n):
+            t = loc.nth(i)
+            tb = t.bounding_box()
+            if not tb: continue
+            tx, ty, tw, th = int(tb["x"]), int(tb["y"]), int(tb["width"]), int(tb["height"])
+            if ty < by and (tx < (bx + bw) and (tx + tw) > bx):
+                dy = by - ty
+                if 0 < dy < 220 and dy < best_dy:
+                    label = (t.inner_text() or "").strip()
+                    if label:
+                        best_dy = dy; closest = label
+        return closest
+    except Exception:
+        return None
+
+# ========== load screengrabs list from DB (read-only) ==========
+# If you want a pure-URL input instead, uncomment the small "Manual URL" block later.
+
+from supabase import create_client
+def _sget(*keys, default=None):
     for k in keys:
         try:
-            if k in st.secrets:
-                return st.secrets[k]
+            if k in st.secrets: return st.secrets[k]
         except Exception:
             pass
         v = os.getenv(k)
-        if v:
-            return v
+        if v: return v
     return default
 
-SUPABASE_URL = sget("SUPABASE_URL", "SUPABASE__URL")
-SUPABASE_KEY = sget("SUPABASE_SERVICE_ROLE_KEY","SUPABASE_ANON_KEY","SUPABASE_SERVICE_KEY","SUPABASE__SUPABASE_SERVICE_KEY")
-KDH_BUCKET   = sget("KDH_BUCKET", default="kpidrifthunter")
+SUPABASE_URL = _sget("SUPABASE_URL","SUPABASE__URL")
+SUPABASE_KEY = _sget("SUPABASE_SERVICE_ROLE_KEY","SUPABASE_SERVICE_KEY","SUPABASE_ANON_KEY","SUPABASE__SUPABASE_SERVICE_KEY")
+KDH_BUCKET   = _sget("KDH_BUCKET", default="kpidrifthunter")
 
-@st.cache_resource
-def get_sb() -> Client:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("Missing Supabase config. Add SUPABASE_URL and a SERVICE_ROLE/ANON key in .streamlit/secrets.toml")
-        st.stop()
+sb = None
+if SUPABASE_URL and SUPABASE_KEY:
     try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
+        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e:
-        st.error(f"Could not connect to Supabase: {e}")
-        st.stop()
+        st.warning(f"Supabase not available ({e}); you can still paste a URL below.")
 
-sb: Client = get_sb()
-
-# ── Storage helpers ───────────────────────────────────────────────────────────
-def _key_only(bucket: str, key: str) -> str:
-    return "/".join(key.split("/")[1:]) if key.startswith(bucket + "/") else key
-
-def storage_signed_url(bucket: str, key: str, ttl_sec=3600) -> str:
-    return sb.storage.from_(bucket).create_signed_url(_key_only(bucket, key), ttl_sec)["signedURL"]
-
-def storage_upload_bytes(bucket: str, key: str, data: bytes, content_type="image/png") -> None:
-    # NOTE: 'upsert' must be STRING ("true"/"false")
-    options = {"contentType": content_type, "upsert": "true"}
-    sb.storage.from_(bucket).upload(_key_only(bucket, key), data, options)
-
-# ── Load recent screengrabs from DB ───────────────────────────────────────────
 @st.cache_data(ttl=60)
 def load_recent_screengrabs(limit=200):
+    if not sb: return []
     q = (
         sb.table("kdh_screengrab_dim")
           .select("screengrab_id, url, platform, storage_path_full, captured_at")
@@ -78,34 +265,21 @@ def load_recent_screengrabs(limit=200):
           .limit(limit)
           .execute()
     )
-    rows = q.data or []
-    for r in rows:
-        try:
-            r["thumb_url"] = storage_signed_url(KDH_BUCKET, r["storage_path_full"], ttl_sec=3600)
-        except Exception:
-            r["thumb_url"] = ""
-    return rows
+    return q.data or []
 
 rows = load_recent_screengrabs()
-
-if not rows:
-    st.info("No screengrabs found yet. Run the scan first on page 21.")
-    st.stop()
-
-# Build a selection table using st.data_editor
-df = pd.DataFrame(rows)
+df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["screengrab_id","url","platform","captured_at","storage_path_full"])
 df["Select"] = False
 
-st.subheader("Recent Screengrabs")
+st.subheader("Recent Screengrabs (from DB)")
 edited = st.data_editor(
-    df[["Select", "thumb_url", "url", "platform", "captured_at", "screengrab_id", "storage_path_full"]],
+    df[["Select", "url", "platform", "captured_at", "screengrab_id", "storage_path_full"]],
     column_config={
         "Select": st.column_config.CheckboxColumn("Select"),
-        "thumb_url": st.column_config.ImageColumn("Preview", help="Signed URL preview"),
         "url": st.column_config.LinkColumn("URL"),
         "platform": "Platform",
         "captured_at": "Captured At (UTC)",
-        "screengrab_id": st.column_config.TextColumn("ID", help="DB screengrab id"),
+        "screengrab_id": st.column_config.TextColumn("ID"),
         "storage_path_full": st.column_config.TextColumn("Storage Path"),
     },
     use_container_width=True,
@@ -113,270 +287,150 @@ edited = st.data_editor(
     num_rows="dynamic",
     height=420,
 )
-
 selected = edited[edited["Select"] == True]  # noqa: E712
 
-st.divider()
-c1, c2, _ = st.columns([1,1,6])
-extract_btn = c1.button("▶️ Extract", type="primary", use_container_width=True, disabled=selected.empty)
-refresh_btn = c2.button("↻ Refresh", use_container_width=True)
+st.markdown("— or —")
+manual_url = st.text_input("Manual URL (Power BI / Tableau public link)")
 
+c1, c2, _ = st.columns([1,1,6])
+go_btn = c1.button("▶️ Extract to ./screenshots", type="primary", use_container_width=True,
+                   disabled=(selected.empty and not manual_url.strip()))
+refresh_btn = c2.button("↻ Refresh DB list", use_container_width=True)
 if refresh_btn:
     st.cache_data.clear()
     st.rerun()
 
-# ── Visual helpers ───────────────────────────────────────────────────────────
-def overlay_boxes_on_image(img_bytes: bytes, boxes: List[Tuple[int,int,int,int]]) -> bytes:
-    im = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-    draw = ImageDraw.Draw(im, "RGBA")
-    for (x, y, w, h) in boxes:
-        for off in range(2):
-            draw.rectangle([x-off, y-off, x+w+off, y+h+off], outline=(0, 0, 0, 255))
-    out = io.BytesIO()
-    im.save(out, format="PNG")
-    return out.getvalue()
+# ========== Core extraction (DOM clip screenshots) ==========
+def extract_like_cli(url: str, outdir: Path, viewport=(1920,1080), scale=2.0, max_widgets=60) -> Dict:
+    outdir = _ensure_outdir(outdir)
+    platform = _detect_platform(url)
+    ts = _nowstamp()
+    artifacts: Dict[str, str] = {}
 
-def sha256_bytes(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        ctx = browser.new_context(viewport={"width": viewport[0], "height": viewport[1]},
+                                  device_scale_factor=scale)
+        page = ctx.new_page()
 
-# ── Minimal extractor (provider-agnostic with Power BI focus) ─────────────────
-@with_browser(headless=True, scale=2.0, viewport=(1920, 1080))
-def extract_widgets(ctx, url: str, screengrab_id: str, full_key: str, session_prefix: str) -> Dict:
-    """
-    Returns:
-      {
-        "widget_count": int,
-        "crops": [{"bytes": ..., "path": ..., "bbox": [x,y,w,h], "label": "..."}],
-        "overlays_key": "<path/to/overlays.png>",
-      }
-    """
-    page = ctx.new_page()
-    page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(1200)
-
-    # Find primary iframe (Power BI/Tableau embeds). We'll query inside it,
-    # BUT element.bounding_box() is already in main-page coords. Do NOT add iframe offset.
-    main_frame = page
-    iframes = page.locator("iframe")
-    if iframes.count() > 0:
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         try:
-            fr = iframes.first
-            fr.wait_for(timeout=15_000)
-            cf = fr.content_frame()
-            if cf:  # use the content frame for querying
-                main_frame = cf
+            page.wait_for_load_state("networkidle", timeout=6_000)
+        except PWTimeout:
+            pass
+        page.wait_for_timeout(1000)
+
+        # Full page screenshot (like CLI)
+        full_path = outdir / f"{platform}_full_{ts}.png"
+        page.screenshot(path=str(full_path), full_page=True)
+        artifacts["full"] = str(full_path.resolve())
+
+        # Pick content frame if present
+        frame = page.main_frame
+        try:
+            if page.locator("iframe").count():
+                cf = page.locator("iframe").first.content_frame()
+                if cf: frame = cf
         except Exception:
             pass
 
-    # Do a quick inventory scroll to trigger lazy visuals (inside frame if present)
-    try:
-        scrollable = main_frame.evaluate("() => ({ h: document.documentElement.scrollHeight, vh: window.innerHeight })")
-        total_h = int(scrollable.get("h", 0) or 0)
-        vh = int(scrollable.get("vh", 0) or 800)
-        steps = [0]
-        # step ~70% viewport height up to 3 passes
-        pos = vh
-        while pos < total_h and len(steps) < 4:
-            steps.append(pos)
-            pos += int(vh * 0.7)
-        for s in steps:
-            main_frame.evaluate(f"window.scrollTo(0, {s});")
-            page.wait_for_timeout(600)
-    except Exception:
-        pass  # harmless
+        # Report name detection
+        report_name, _dbg = _detect_report_name(page, frame)
 
-    # Selector priority: containers → a11y roles → drawing surfaces
-    SELECTOR_GROUPS = [
-        # Power BI containers (capture whole visual incl. title)
-        (".visualContainer, .visualContainerHost, .modernVisualOverlay", "container"),
-        # A11y wrappers
-        ("[role='figure'], [role='img']", "role"),
-        # Tableau containers
-        (".tab-worksheet, .tab-viz, .tabCanvas", "tableau"),
-        # Drawing primitives (fallback)
-        ("svg, canvas", "primitive"),
-    ]
+        # Candidate elements
+        selectors = [
+            ".visualContainer, .visualContainerHost, .modernVisualOverlay",   # Power BI
+            ".tab-worksheet, .tab-viz, .tabCanvas",                            # Tableau
+            "[role='figure'], [role='img']",
+            "svg, canvas",
+        ]
+        MIN_W, MIN_H = 150, 100
+        PAD = 12
+        candidates: List[Tuple[str, Tuple[int,int,int,int]]] = []
 
-    MIN_W, MIN_H = 150, 100    # less conservative so slim charts aren't skipped
-    PAD = 12                   # pad crops to include titles/axes
-
-    candidates: List[Tuple[str, str, Tuple[int,int,int,int]]] = []  # (selector, kind, box)
-
-    for sel, kind in SELECTOR_GROUPS:
-        try:
-            loc = main_frame.locator(sel)
-            count = loc.count()
-            n = min(20, count)  # cap per selector
-            for i in range(n):
-                el = loc.nth(i)
-                try:
-                    bb = el.bounding_box()
-                    if not bb:
-                        continue
-                    x, y = int(bb["x"]), int(bb["y"])
-                    w, h = int(bb["width"]), int(bb["height"])
-                    if w < MIN_W or h < MIN_H:
-                        continue
-                    candidates.append((sel, kind, (x, y, w, h)))
-                except Exception:
-                    continue
-        except Exception:
-            continue
-
-    # Deduplicate by IoU, but allow parent+child if kinds differ (e.g., container vs canvas)
-    def iou(a, b) -> float:
-        ax, ay, aw, ah = a
-        bx, by, bw, bh = b
-        x1, y1 = max(ax, bx), max(ay, by)
-        x2, y2 = min(ax+aw, bx+bw), min(ay+ah, by+bh)
-        inter = max(0, x2-x1) * max(0, y2-y1)
-        if inter == 0:
-            return 0.0
-        ua = aw*ah + bw*bh - inter
-        return inter / max(1, ua)
-
-    kept: List[Tuple[str, str, Tuple[int,int,int,int]]] = []
-    for sel, kind, box in sorted(candidates, key=lambda c: (c[2][1], c[2][0])):  # top→bottom, left→right
-        drop = False
-        for _, k_kind, k_box in kept:
-            overlap = iou(box, k_box)
-            # If heavy overlap and same "kind", drop; if kinds differ, allow (keeps container + canvas)
-            if overlap > 0.7 and k_kind == kind:
-                drop = True
-                break
-        if not drop:
-            kept.append((sel, kind, box))
-
-    # Download full.png (for overlay + PIL crops)
-    full_signed = storage_signed_url(KDH_BUCKET, full_key, ttl_sec=3600)
-    full_img_bytes = requests.get(full_signed, timeout=20).content
-    full_im = Image.open(io.BytesIO(full_img_bytes)).convert("RGBA")
-    W, H = full_im.size
-
-    # Persistent live log instead of collapsing st.status
-    log = st.container()
-    prog = st.progress(0, text="Scanning widgets…")
-    overlay_boxes: List[Tuple[int,int,int,int]] = []
-    crops_for_db: List[Dict] = []
-
-    total = max(1, len(kept))
-    log.write(f"Found **{len(kept)}** candidates after de-dup.")
-
-    # Helper to pad & clamp boxes
-    def pad_clamp(x, y, w, h, pad=PAD):
-        x2, y2 = x + w, y + h
-        x_p = max(0, x - pad)
-        y_p = max(0, y - pad)
-        x2_p = min(W, x2 + pad)
-        y2_p = min(H, y2 + pad)
-        return x_p, y_p, x2_p - x_p, y2_p - y_p
-
-    # Optional: find a nearby title above the box (Power BI)
-    def find_title_text(box: Tuple[int,int,int,int]) -> Optional[str]:
-        try:
-            # Query elements likely to contain titles; filter by vertical proximity
-            title_nodes = main_frame.locator(".visualTitle, [role='heading'], h1, h2, h3, h4, h5, h6")
-            count = min(10, title_nodes.count())
-            bx, by, bw, bh = box
-            mid_x = bx + bw // 2
-            closest = None
-            best_dy = 99999
-            for i in range(count):
-                t = title_nodes.nth(i)
-                tb = t.bounding_box()
-                if not tb:
-                    continue
-                tx, ty, tw, th = int(tb["x"]), int(tb["y"]), int(tb["width"]), int(tb["height"])
-                # vertically above and horizontally overlapping somewhat
-                if ty < by and (tx < (bx + bw) and (tx + tw) > bx):
-                    dy = by - ty
-                    if dy < 160 and dy < best_dy:
-                        txt = t.inner_text() or ""
-                        txt = txt.strip()
-                        if txt:
-                            best_dy = dy
-                            closest = txt
-            return closest
-        except Exception:
-            return None
-
-    for idx, (sel, kind, (x, y, w, h)) in enumerate(kept, start=1):
-        # Pad box to include titles/axes
-        px, py, pw, ph = pad_clamp(x, y, w, h, pad=PAD)
-        overlay_boxes.append((px, py, pw, ph))
-        # Update animated overlay preview (keeps log visible)
-        if idx == 1 or idx % 2 == 0:
-            st.image(overlay_boxes_on_image(full_img_bytes, overlay_boxes),
-                     caption=f"Overlay after {idx} crops",
-                     use_container_width=True)
-
-        # Crop via PIL (stable & fast)
-        crop_im = full_im.crop((px, py, px+pw, py+ph))
-        bio = io.BytesIO()
-        crop_im.save(bio, format="PNG")
-        crop_bytes = bio.getvalue()
-
-        # Try to capture a nearby title
-        label = find_title_text((x, y, w, h)) or ""
-
-        png_path = f"{session_prefix}/widgets/widget_{idx:02d}.png"
-        storage_upload_bytes(KDH_BUCKET, png_path, crop_bytes, content_type="image/png")
-        crops_for_db.append({"bytes": crop_bytes, "path": png_path, "bbox": [px, py, pw, ph], "label": label})
-
-        log.write(f"✅ {idx}/{total} — kept `{kind}` from `{sel}` ({w}×{h})"
-                  + (f" — **{label}**" if label else ""))
-
-        prog.progress(min(idx/total, 1.0))
-
-    # Save overlays.png
-    overlays_key = f"{session_prefix}/widgets/overlays.png"
-    storage_upload_bytes(KDH_BUCKET, overlays_key, overlay_boxes_on_image(full_img_bytes, overlay_boxes))
-
-    return {
-        "widget_count": len(crops_for_db),
-        "crops": crops_for_db,
-        "overlays_key": overlays_key,
-    }
-
-# ── Handle Extract action ─────────────────────────────────────────────────────
-if extract_btn:
-    if selected.empty:
-        st.warning("Select at least one screengrab row to extract.")
-        st.stop()
-
-    for _, row in selected.iterrows():
-        with st.container(border=True):
-            st.subheader(f"Extracting: {row['platform']} — {row['url']}")
+        for sel in selectors:
             try:
-                full_key = row["storage_path_full"]  # e.g., .../<session>/<slug>/full.png
-                base_prefix = "/".join(full_key.split("/")[:-1])  # drop 'full.png'
-                session_prefix = base_prefix
+                loc = frame.locator(sel)
+                n = min(40, loc.count())
+                for i in range(n):
+                    el = loc.nth(i)
+                    try:
+                        bb = el.bounding_box()
+                        if not bb: continue
+                        x, y = int(bb["x"]), int(bb["y"]); w, h = int(bb["width"]), int(bb["height"])
+                        if w < MIN_W or h < MIN_H: continue
+                        candidates.append((sel, (x, y, w, h)))
+                    except Exception: pass
+            except PWError:
+                pass
 
-                res = extract_widgets(
-                    url=row["url"],
-                    screengrab_id=row["screengrab_id"],
-                    full_key=full_key,
-                    session_prefix=session_prefix
-                )
+        kept: List[Tuple[str, Tuple[int,int,int,int]]] = []
+        for sel, box in sorted(candidates, key=lambda c: (c[1][1], c[1][0])):  # TL->BR
+            drop = False
+            for _, kb in kept:
+                if _iou(box, kb) > 0.72:
+                    drop = True; break
+            if not drop:
+                kept.append((sel, box))
 
-                # Persist widget rows
-                if res["crops"]:
-                    insert_widgets(
-                        sb,
-                        screengrab_id=row["screengrab_id"],
-                        storage_bucket=KDH_BUCKET,
-                        crops=[{k: v for k, v in c.items() if k in {"bytes","path","bbox"}}],  # DB helper expects these keys
-                    )
-                st.success(f"Extracted {res['widget_count']} widget(s).")
-                st.link_button("Open overlays.png",
-                               storage_signed_url(KDH_BUCKET, res["overlays_key"]),
-                               use_container_width=False)
+        # Save crops with Playwright CLIP (like CLI)
+        saved = []
+        for idx, (_, (x, y, w, h)) in enumerate(kept[:max_widgets], start=1):
+            # small pad
+            px, py = max(0, x-PAD), max(0, y-PAD)
+            pw, ph = max(1, w+2*PAD), max(1, h+2*PAD)
 
+            # Try to infer a title near the top of the box for naming
+            title = _find_title_near(frame, (x, y, w, h)) or "Widget"
+            title_stub = _sanitize_filename(title)
+            filename = f"{platform}_{report_name}_{title_stub}_{idx:02d}.png"
+
+            out_path = outdir / filename
+            try:
+                page.screenshot(path=str(out_path), clip={"x": px, "y": py, "width": pw, "height": ph})
+                saved.append({"idx":idx,"title":title,"bbox":[px,py,pw,ph],"path":str(out_path.resolve())})
+                st.write(f"✅ {idx:02d}  {filename}")
             except Exception as e:
-                tb = traceback.format_exc()
-                st.error(f"Failed to extract for {row['url']}\n\n{e}\n\n```traceback\n{tb}\n```")
+                st.write(f"⚠️ Failed {idx}: {e}")
 
-    st.toast("Done! Refreshing list…", icon="✅")
-    time.sleep(1.2)
-    st.cache_data.clear()
-    st.rerun()
+        ctx.close(); browser.close()
+
+        return {
+            "url": url,
+            "platform": platform,
+            "report_name": report_name,
+            "captured_at": ts,
+            "artifacts": artifacts,
+            "widgets": saved,
+        }
+
+# ========== Run ==========
+if go_btn:
+    targets: List[Tuple[str,str]] = []  # (url, suggested_subdir)
+
+    if not selected.empty:
+        for _, r in selected.iterrows():
+            url = r["url"]
+            # local folder under ./screenshots/{platform}/{ts_or_slug}
+            plat = _detect_platform(url)
+            sub = f"{plat}_{_nowstamp()}"
+            targets.append((url, sub))
+
+    if manual_url.strip():
+        plat = _detect_platform(manual_url.strip())
+        targets.append((manual_url.strip(), f"{plat}_{_nowstamp()}"))
+
+    if not targets:
+        st.warning("No rows selected and no manual URL provided.")
+    else:
+        base = _ensure_outdir(Path("./screenshots"))
+        for url, sub in targets:
+            st.subheader(f"Extracting → {url}")
+            outdir = _ensure_outdir(base / sub / "widgets")
+            manifest = extract_like_cli(url=url, outdir=outdir, viewport=(1920,1080), scale=2.0)
+            # Save a small manifest JSON per run
+            (outdir.parent / f"manifest_{_nowstamp()}.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            st.success(f"Saved {len(manifest['widgets'])} crops to: {outdir}")
+            st.code(str(outdir), language="text")
+
+# (No auto-rerun here; the page stays open so you can inspect results.)
