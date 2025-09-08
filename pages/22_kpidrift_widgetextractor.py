@@ -19,6 +19,12 @@ from supabase import create_client, Client
 from provisioning.a2_kpidrift_widgetextractor_power_bi import extract as extract_pbi
 from provisioning.a2_kpidrift_widgetextractor_tableau import extract as extract_tbl
 
+import inspect, sys
+import provisioning.a2_kpidrift_capture.a2_kpidrift_widgetextractor_tableau_intrial as intrial
+print("INTRIAL FILE:", intrial.__file__)
+print("INTRIAL SIG :", inspect.signature(intrial.capture_tableau_api))
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="KPI Drift — Widget Extractor", page_icon="🧩", layout="wide")
 st.title("🧩 KPI Drift — Widget Extractor")
