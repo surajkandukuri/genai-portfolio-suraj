@@ -6,6 +6,10 @@ import json
 import datetime as dt
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
+from supabase import create_client
+import os
+
+
 
 # Try Cloud (trial) and Public extractors
 try:
