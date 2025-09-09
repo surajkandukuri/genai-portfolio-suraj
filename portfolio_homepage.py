@@ -33,6 +33,10 @@ kpi_drift  = st.Page("kpidrifthunteragent_homepage.py", title="KPI Drift Hunter"
 kpi_drift_run = st.Page("pages/21_kpidrift_runthescan.py", title="Run the Scan", icon=":material/play_circle:") 
 #KPI Widget Extractor child
 kpi_drift_widgetextractor = st.Page("pages/22_kpidrift_widgetextractor.py", title="Widget Extractor", icon=":material/play_circle:") 
+#KPI Widget Extractor and Run 
+kpi_drift_runandextract = st.Page("pages/23_kpidrift_runandextract.py", title="Run and Extract", icon=":material/play_circle:") 
+#KPI Widget Parse and Compare
+kpi_drift_parseandcompare = st.Page("pages/24_kpidrift_parseandcompare.py", title="Parse and Compare", icon=":material/play_circle:") 
 
 # Admin children
 console    = st.Page("pages/2_admin.py",             title="Console",         icon=":material/terminal:")
@@ -47,7 +51,7 @@ nav = st.navigation(
     {
         "Home": [home],
         "ProvisionAgent": [prov_agent, provision],     # landing + child    
-        "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_run,kpi_drift_widgetextractor],  # landing + child
+        "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_run,kpi_drift_widgetextractor,kpi_drift_runandextract,kpi_drift_parseandcompare],  # landing + child
         "Admin · ProvisionalAgent": [console, reports, artifacts],
         "Account": [logout],
     },
