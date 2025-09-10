@@ -10,7 +10,9 @@ import streamlit as st
 from supabase import create_client, Client
 from postgrest.exceptions import APIError
 from mistralai import Mistral
-
+import importlib.util
+#from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
+from provisioning.a2_kpidrift_capture.a2_kpidrift_pair_compare import PairCompareLLM
 # ─────────────────────────────────────────────────────────────────────────────
 # Config / Secrets
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,6 +54,20 @@ def get_sb() -> Client:
         st.stop()
 
 sb: Client = get_sb()
+
+# NEW: cache the LLM-only pair comparator
+@st.cache_resource
+def _get_pair_comparator():
+    return PairCompareLLM(
+        supabase_client=sb,
+        secrets=st.secrets,                 # reads MISTRAL_API_KEY / MISTRAL_MODEL if present
+        tbl_widgets=TBL_WIDGETS,
+        tbl_extract=TBL_XFACT,
+        tbl_pairs=TBL_PAIR,
+        tbl_compare="kdh_compare_fact",
+    )
+
+cmp_llm = _get_pair_comparator()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers (schema-aware + storage)
@@ -298,7 +314,7 @@ def widget_titles(widget_ids: List[str]) -> Dict[str, str]:
     return {r["widget_id"]: r.get("widget_title") or "" for r in rows}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM extract + compare
+# LLM extract + compare (Parse step uses this extractor)
 # ─────────────────────────────────────────────────────────────────────────────
 GRAPH_PROMPT = (
   "You are an expert extraction engine for charts (line/bar/pie). "
@@ -609,30 +625,71 @@ if not _any_extract:
 
 # =============================================================================
 # ② MAP (Human-in-the-Loop) — only show widgets that ALREADY HAVE parsed JSON
+#     - No reruns while typing (form)
+#     - "Persist mapping" writes SCD-2 rows
+#     - "Fetch mapping from database" pulls SCD-2 current rows
 # =============================================================================
 st.header("② Map (only parsed widgets) & Save (SCD-2)")
 
-st.caption("Pick two sessions. Only widgets with a parsed JSON appear here. Type the same **Pair #** on both sides, then **Save**.")
+st.caption(
+    "Pick two sessions. Only widgets with a parsed JSON appear here. "
+    "Type the same **Pair #** on both sides, then click **Persist mapping**. "
+    "You can also **Fetch mapping from database** to see what is already saved."
+)
 
+# ---------- helpers (define if missing) ---------------------------------------
+if "widget_is_parsed" not in globals():
+    def widget_is_parsed(widget_id: str) -> tuple[bool, Optional[Dict]]:
+        """Returns (True,row) if latest extract exists and has JSON payload, else (False,None)."""
+        row = latest_extract_for_widget(widget_id)
+        if not row:
+            return (False, None)
+        payload = _pick_json_payload(row)
+        return (bool(payload), row)
+
+if "only_parsed_widgets" not in globals():
+    def only_parsed_widgets(widgets: List[Dict]) -> List[Dict]:
+        """Filter widgets list to those that have a parsed JSON available."""
+        out: List[Dict] = []
+        for w in widgets:
+            ok, _ = widget_is_parsed(w.get("widget_id"))
+            if ok:
+                out.append(w)
+        return out
+
+# ---------- session pickers ---------------------------------------------------
 mcol1, mcol2 = st.columns(2)
-left_session  = mcol1.selectbox("Left session", options=["— choose —"] + sessions, index=0, key="map_left_sess")
-right_session = mcol2.selectbox("Right session", options=["— choose —"] + sessions, index=0, key="map_right_sess")
+left_session  = mcol1.selectbox(
+    "Left session",
+    options=["— choose —"] + sessions,
+    index=0,
+    key="map_left_sess",
+)
+right_session = mcol2.selectbox(
+    "Right session",
+    options=["— choose —"] + sessions,
+    index=0,
+    key="map_right_sess",
+)
 
-def widget_is_parsed(widget_id: str) -> tuple[bool, Optional[Dict]]:
-    row = latest_extract_for_widget(widget_id)
-    if not row: return (False, None)
-    payload = _pick_json_payload(row)
-    return (bool(payload), row)
+# ---------- stable scratch dicts (form-local state) ---------------------------
+if "map_scratch_left" not in st.session_state:
+    st.session_state.map_scratch_left = {}
+if "map_scratch_right" not in st.session_state:
+    st.session_state.map_scratch_right = {}
 
-def only_parsed_widgets(widgets: List[Dict]) -> List[Dict]:
-    out = []
-    for w in widgets:
-        ok, _ = widget_is_parsed(w["widget_id"])
-        if ok:
-            out.append(w)
-    return out
+def _reset_scratch_for_visible(left_ids: List[str], right_ids: List[str]):
+    """
+    Keep only keys that are visible in the current left/right session selections.
+    This keeps the form stable when user changes sessions.
+    """
+    L = st.session_state.map_scratch_left
+    R = st.session_state.map_scratch_right
+    st.session_state.map_scratch_left  = {k: v for k, v in L.items() if k in left_ids}
+    st.session_state.map_scratch_right = {k: v for k, v in R.items() if k in right_ids}
 
-left_widgets_all: List[Dict] = []
+# ---------- load widgets for chosen sessions (parsed only) --------------------
+left_widgets_all:  List[Dict] = []
 right_widgets_all: List[Dict] = []
 if left_session and left_session != "— choose —":
     left_widgets_all  = load_widgets_for_session(left_session)
@@ -642,10 +699,56 @@ if right_session and right_session != "— choose —":
 left_widgets  = only_parsed_widgets(left_widgets_all)
 right_widgets = only_parsed_widgets(right_widgets_all)
 
-if "pair_left" not in st.session_state:  st.session_state.pair_left  = {}
-if "pair_right" not in st.session_state: st.session_state.pair_right = {}
+left_ids  = [w["widget_id"] for w in left_widgets]
+right_ids = [w["widget_id"] for w in right_widgets]
+_reset_scratch_for_visible(left_ids, right_ids)
 
-def render_pair_column(title: str, widgets: List[Dict], state_key_dict: str, bg_hex: str):
+# ---------- top action buttons ------------------------------------------------
+bcol1, bcol2, _ = st.columns([0.25, 0.25, 1])
+fetch_clicked = bcol1.button("Fetch mapping from database", use_container_width=True)
+
+# Grid placeholder; we only show grids after Fetch/Persist (no flicker while typing)
+_grid_placeholder = st.empty()
+
+# ---------- fetch mappings & show grid ---------------------------------------
+if fetch_clicked:
+    db_pairs = load_current_pairs() or []
+    if not db_pairs:
+        _grid_placeholder.info("No current mappings in SCD-2 table.")
+    else:
+        # Optionally back-fill the scratch values to match DB (if those widgets are visible here)
+        for row in db_pairs:
+            pn = row.get("pair_number")
+            if pn is None:
+                continue
+            pn = int(pn)
+            l_id, r_id = row.get("widget_id_left"), row.get("widget_id_right")
+            if l_id in left_ids:
+                st.session_state.map_scratch_left[l_id] = pn
+            if r_id in right_ids:
+                st.session_state.map_scratch_right[r_id] = pn
+
+        df_rows = []
+        for r in db_pairs:
+            df_rows.append({
+                "Pair #": r.get("pair_number"),
+                "Left ID": r.get("widget_id_left"),
+                "Right ID": r.get("widget_id_right"),
+                "Left Session": r.get("left_session_id"),
+                "Right Session": r.get("right_session_id"),
+                "Status": r.get("status"),
+                "Current?": "✅" if r.get("curr_rec_ind") else "—",
+            })
+        _grid_placeholder.dataframe(pd.DataFrame(df_rows), use_container_width=True)
+
+# ---------- pairing UI in a form (NO reruns while typing) --------------------
+st.markdown("#### Pair the widgets (type numbers; no refresh until you click **Persist mapping**)")
+
+def _render_pair_column(title: str, widgets: List[Dict], scratch_key: str, bg_hex: str):
+    """
+    Render 2-up cards with image + number inputs.
+    Values are buffered in st.session_state[scratch_key] and do NOT trigger reruns (inside form).
+    """
     st.markdown(
         f'<div style="padding:10px 12px;border-radius:12px;border:1px solid #eee;background:{bg_hex};margin-bottom:8px;font-weight:700">{title}</div>',
         unsafe_allow_html=True,
@@ -653,13 +756,14 @@ def render_pair_column(title: str, widgets: List[Dict], state_key_dict: str, bg_
     if not widgets:
         st.info("No parsed widgets in this session yet.")
         return
+
     for i in range(0, len(widgets), 2):
         rc = st.columns(2)
         for j in range(2):
-            if i + j >= len(widgets): continue
-            w = widgets[i+j]
-            card = rc[j].container(border=True)
-            with card:
+            if i + j >= len(widgets):
+                continue
+            w = widgets[i + j]
+            with rc[j].container(border=True):
                 img_key = (w.get("storage_path_widget") or "").lstrip("/")
                 try:
                     png_bytes = fetch_widget_image_bytes(KDH_BUCKET, img_key)
@@ -668,66 +772,77 @@ def render_pair_column(title: str, widgets: List[Dict], state_key_dict: str, bg_
                     st.image(png_bytes, caption=f"{title} · {fname}", use_container_width=True)
                 except Exception:
                     st.warning("Image not available")
+
                 st.caption(f"`{w.get('widget_id')}` (parsed ✅)")
-                default_val = int(st.session_state[state_key_dict].get(w["widget_id"], 0) or 0)
+                current_val = int(st.session_state[scratch_key].get(w["widget_id"], 0) or 0)
+                # Important: keys must be unique and stable inside the form
                 val = st.number_input(
                     f"Pair # — {w['widget_id']}",
-                    key=f"pair_{state_key_dict}_{w['widget_id']}",
-                    min_value=0, step=1, value=default_val,
-                    help="Use the same number on left & right to link. 0 = unpaired."
+                    key=f"pair_{scratch_key}_{w['widget_id']}",
+                    min_value=0,
+                    step=1,
+                    value=current_val,
+                    help="Use the same number on left & right to link. 0 = unpaired.",
                 )
-                st.session_state[state_key_dict][w["widget_id"]] = int(val)
+                st.session_state[scratch_key][w["widget_id"]] = int(val)
 
-mc1, mc2 = st.columns(2)
-with mc1:
-    render_pair_column("Left widgets (parsed only)", left_widgets, "pair_left", "#f2f7ff")
-with mc2:
-    render_pair_column("Right widgets (parsed only)", right_widgets, "pair_right", "#fff2e8")
+# Use a form to buffer inputs until the user clicks "Persist mapping"
+with st.form("map_form", clear_on_submit=False):
+    mc1, mc2 = st.columns(2)
+    with mc1:
+        _render_pair_column("Left widgets (parsed only)", left_widgets, "map_scratch_left", "#f2f7ff")
+    with mc2:
+        _render_pair_column("Right widgets (parsed only)", right_widgets, "map_scratch_right", "#fff2e8")
 
-# Build { "1": {"left":[ids], "right":[ids]} }
-pairs: Dict[str, Dict[str, List[str]]] = {}
-def add_pair(side: str, wid: str, num: int):
-    if num and int(num) > 0:
-        k = str(int(num))
-        pairs.setdefault(k, {"left": [], "right": []})
-        pairs[k][side].append(wid)
+    persist_clicked = st.form_submit_button("💾 Persist mapping (SCD-2)", type="primary", use_container_width=True)
 
-for wid, num in st.session_state.pair_left.items():  add_pair("left",  wid, num)
-for wid, num in st.session_state.pair_right.items(): add_pair("right", wid, num)
+# ---------- persist logic (runs ONCE after form submit) -----------------------
+if persist_clicked:
+    # Build {pair_no: {"left":[ids], "right":[ids]}}
+    pairs_scratch: Dict[str, Dict[str, List[str]]] = {}
 
-st.subheader("Pairing preview (parsed widgets)")
-if not pairs:
-    st.info("No pairs yet. Set a Pair # on both sides.")
-else:
-    rows = []
-    for k in sorted(pairs, key=lambda x: int(x)):
-        L, R = pairs[k]["left"], pairs[k]["right"]
-        status = "✅ 1:1 ready" if (len(L) == 1 and len(R) == 1) else "⚠️ check"
-        rows.append({"Pair #": k, "Left IDs": ", ".join(L) or "—", "Right IDs": ", ".join(R) or "—", "Status": status})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    def _add(side: str, wid: str, num: int):
+        if num and int(num) > 0:
+            k = str(int(num))
+            pairs_scratch.setdefault(k, {"left": [], "right": []})
+            pairs_scratch[k][side].append(wid)
 
-save_pairs = st.button(
-    "💾 Save mappings (SCD-2)",
-    type="primary",
-    disabled=not any(len(v["left"])==1 and len(v["right"])==1 for v in pairs.values()),
-)
-if save_pairs:
-    saved = []
-    for k in sorted(pairs, key=lambda x: int(x)):
-        L, R = pairs[k]["left"], pairs[k]["right"]
-        if len(L) != 1 or len(R) != 1:
-            continue
-        result = scd2_upsert_pair(
-            widget_left=L[0],
-            widget_right=R[0],
-            left_sess=left_session if left_session != "— choose —" else None,
-            right_sess=right_session if right_session != "— choose —" else None,
-            pair_number=int(k)
-        )
-        saved.append({"pair_number": k, "left": L[0], "right": R[0], **result})
-    st.success("Saved mappings.")
-    st.dataframe(pd.DataFrame(saved), use_container_width=True)
-    load_current_pairs.clear()
+    for wid, num in st.session_state.map_scratch_left.items():
+        _add("left", wid, num)
+    for wid, num in st.session_state.map_scratch_right.items():
+        _add("right", wid, num)
+
+    save_rows = []
+    issues = []
+    for k in sorted(pairs_scratch, key=lambda x: int(x)):
+        L, R = pairs_scratch[k]["left"], pairs_scratch[k]["right"]
+        if len(L) == 1 and len(R) == 1:
+            res = scd2_upsert_pair(
+                widget_left=L[0],
+                widget_right=R[0],
+                left_sess=left_session if left_session != "— choose —" else None,
+                right_sess=right_session if right_session != "— choose —" else None,
+                pair_number=int(k),
+            )
+            save_rows.append({"pair_number": int(k), "left": L[0], "right": R[0], **res})
+        else:
+            issues.append({"pair_number": int(k), "left_ids": L, "right_ids": R, "status": "⚠ check (expect 1:1)"})
+
+    if save_rows:
+        st.success(f"Saved {len(save_rows)} mapping(s).")
+        df_saved = pd.DataFrame(save_rows).sort_values("pair_number")
+        _grid_placeholder.dataframe(df_saved, use_container_width=True)
+        load_current_pairs.clear()
+
+    if issues:
+        st.warning("Some pairs were not 1:1 and were not persisted.")
+        st.dataframe(pd.DataFrame(issues).sort_values("pair_number"), use_container_width=True)
+
+# Note: We do NOT render a “preview while typing” grid anymore.
+#       The preview grids appear ONLY after “Fetch mapping from database”
+#       or after “Persist mapping” (saved results), which keeps UI stable
+#       and avoids flicker.
+
 
 # =============================================================================
 # ③ COMPARE — only on mapped pairs (SCD-2 current rows)
@@ -776,25 +891,45 @@ else:
             except Exception:
                 st.warning("Right image not available")
 
-        # Compare button (gated)
+        # Compare button (LLM-only)
         left_ok, _  = widget_is_parsed(chosen["widget_id_left"])
         right_ok, _ = widget_is_parsed(chosen["widget_id_right"])
-        run_cmp = st.button("Run Compare for this Pair", type="primary", disabled=not (left_ok and right_ok))
+        run_cmp = st.button("Run Compare for this Pair (LLM)", type="primary", disabled=not (left_ok and right_ok))
 
         if not (left_ok and right_ok):
             st.info("This pair includes an unparsed widget. Parse both in **①**.")
 
         if run_cmp:
-            ext_l = latest_extract_for_widget(chosen["widget_id_left"])
-            ext_r = latest_extract_for_widget(chosen["widget_id_right"])
-            if not ext_l or not ext_r:
-                st.error("No parsed JSON for one or both widgets. Use section ① Parse first.")
+            # Use the LLM-only comparator; it will:
+            # - load the latest extracts for both widgets
+            # - call the LLM to compare VALUES ONLY
+            # - persist SCD-2 row into kdh_compare_fact
+            # - return {"result": {...}, "db_row": {...}}
+            out = cmp_llm.compare_pair_by_row(chosen)
+
+            if "error" in out:
+                st.error(out["error"])
             else:
-                vals_a = _pick_json_payload(ext_l)
-                vals_b = _pick_json_payload(ext_r)
-                res = compare_json_values(vals_a, vals_b)
-                st.subheader("Verdict")
-                st.write(f"**Verdict:** `{res['verdict']}` | n={res['n']} | corr={res['corr']} | mape={res['mape']}")
-                if isinstance(res.get("aligned"), pd.DataFrame) and not res["aligned"].empty:
-                    st.subheader("Aligned values")
-                    st.dataframe(res["aligned"], use_container_width=True)
+                res = out["result"]   # {verdict: Matched|NotMatched, confidence, why[], numbers_used{...}}
+                db  = out["db_row"]   # persisted SCD-2 row
+
+                # Verdict banner
+                v = res.get("verdict", "NotMatched")
+                conf = res.get("confidence", 0.0)
+                badge = "✅ Matched" if v == "Matched" else "❌ Not Matched"
+                st.subheader("Verdict (LLM)")
+                st.write(f"{badge}  ·  confidence={conf:.2f}")
+
+                # Short reasons
+                why = res.get("why") or []
+                if why:
+                    st.caption(" · ".join(why))
+
+                # Audit: what numbers the LLM actually compared (left/right normalized)
+                with st.expander("Numbers used (LLM-normalized)", expanded=False):
+                    st.json(res.get("numbers_used", {}))
+
+                # DB row persisted (SCD-2)
+                if show_debug:
+                    with debug_expander("🔎 Debug: Compare SCD-2 row", key="dbg_cmp_db_row"):
+                        st.json(db)
