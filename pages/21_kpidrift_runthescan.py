@@ -22,6 +22,10 @@ from provisioning.ui import card
 from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
 from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
 
+from provisioning.bootstrap import ensure_playwright_installed
+ensure_playwright_installed()
+
+
 # Persistence helpers (upload -> DB)
 from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import (
     upsert_screengrab,

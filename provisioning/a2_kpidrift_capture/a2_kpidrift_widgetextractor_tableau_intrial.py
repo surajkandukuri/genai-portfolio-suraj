@@ -28,6 +28,8 @@ from typing import Dict, List, Optional, Tuple
 import  hashlib
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from provisioning.bootstrap import ensure_playwright_installed
+ensure_playwright_installed()
 
 import tableauserverclient as TSC
 from PIL import Image

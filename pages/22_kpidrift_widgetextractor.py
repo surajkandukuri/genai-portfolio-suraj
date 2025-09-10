@@ -18,6 +18,8 @@ from supabase import create_client, Client
 # === NEW: provider dispatch imports ==========================================
 from provisioning.a2_kpidrift_widgetextractor_power_bi import extract as extract_pbi
 from provisioning.a2_kpidrift_widgetextractor_tableau import extract as extract_tbl
+from provisioning.bootstrap import ensure_playwright_installed
+ensure_playwright_installed()
 
 import inspect, sys
 import provisioning.a2_kpidrift_capture.a2_kpidrift_widgetextractor_tableau_intrial as intrial

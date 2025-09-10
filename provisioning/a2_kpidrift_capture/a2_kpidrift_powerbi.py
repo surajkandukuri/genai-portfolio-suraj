@@ -3,6 +3,8 @@ from typing import Dict
 from playwright.sync_api import TimeoutError as PWTimeout
 from .a2_kpidrift_engine import nowstamp, ensure_outdir, setup_logs, with_browser
 from .a2_kpidrift_types import CaptureResult, Artifacts
+from provisioning.bootstrap import ensure_playwright_installed
+ensure_playwright_installed()
 
 PBI_SELECTORS = [
     "div#pvExplorationHost",
