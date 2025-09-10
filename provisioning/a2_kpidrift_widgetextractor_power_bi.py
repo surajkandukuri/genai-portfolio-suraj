@@ -7,6 +7,10 @@ from typing import Dict, List, Optional, Tuple
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PWError
 from supabase import create_client, Client
+from provisioning.bootstrap import ensure_playwright_ready
+ensure_playwright_ready()
+
+
 
 # Quality helpers (shared)
 from provisioning.a2_kpidrift_capture.a2_kpidrift_quality import (
@@ -277,7 +281,9 @@ def extract(url: str, session_folder: str, viewport=(1920,1080), scale=2.0, max_
     """
     base_local = _ensure_outdir(Path("./screenshots") / session_folder)
     outdir_widgets = _ensure_outdir(base_local / "widgets")
-
+    ensure_playwright_ready()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
     platform = "powerbi"
     ts = _nowstamp()
 

@@ -21,9 +21,14 @@ from provisioning.ui import card
 # Provider-specific capture functions
 from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
 from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
+from provisioning.bootstrap import ensure_playwright_ready
+ensure_playwright_ready()
 
-from provisioning.bootstrap import ensure_playwright_installed
-ensure_playwright_installed()
+@st.cache_resource(show_spinner=False)
+def _bootstrap():
+    ensure_playwright_ready()
+_bootstrap()
+
 
 
 # Persistence helpers (upload -> DB)

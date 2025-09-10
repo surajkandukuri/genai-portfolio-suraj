@@ -9,7 +9,8 @@ from urllib.parse import urlparse
 from supabase import create_client
 import os
 
-
+from provisioning.bootstrap import ensure_playwright_ready
+ensure_playwright_ready()
 
 # Try Cloud (trial) and Public extractors
 try:

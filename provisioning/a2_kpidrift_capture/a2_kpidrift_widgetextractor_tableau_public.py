@@ -10,8 +10,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from provisioning.a2_kpidrift_capture.a2_kpidrift_quality import (
     score_widget, append_quality_suffix
 )
-from provisioning.bootstrap import ensure_playwright_installed
-ensure_playwright_installed()
+from provisioning.bootstrap import ensure_playwright_ready
+ensure_playwright_ready()
 
 # ───────── helpers ─────────
 def _nowstamp_z() -> str:
