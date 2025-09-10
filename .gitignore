@@ -9,3 +9,5 @@ __pycache__/
 .streamlit/config.toml
 .streamlit/*.toml
 tableau_connectivity_test
+matrix_test
+test_mistral_groq_keys
