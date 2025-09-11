@@ -1,11 +1,12 @@
 import sys, os, subprocess, streamlit as st
-from provisioning.bootstrap import ensure_playwright_ready
-# at top of pages/00_playwright_diag.py
 import sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from provisioning.bootstrap import ensure_playwright_ready
+
+
+# at top of pages/00_playwright_diag.py
 
 st.title("Playwright Diag")
 
