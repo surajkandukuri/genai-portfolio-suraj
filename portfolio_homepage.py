@@ -4,6 +4,19 @@ import sys, asyncio, platform
 # --- Page config: exactly once, before any UI calls ---
 st.set_page_config(page_title="GenAI Portfolio", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
 
+# Completely disable vertical page scroll (keep sidebar scrollable)
+st.markdown("""
+<style>
+html, body, [data-testid="stAppViewContainer"] {
+  height: 100vh;
+  overflow: hidden !important; /* no page scroll */
+}
+[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+  overflow: auto !important;   /* allow sidebar to scroll if long */
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Windows asyncio policy (safe no-op on non-Windows)
 if sys.platform.startswith("win"):
     try:
@@ -17,63 +30,85 @@ def landing():
     st.caption("Cross-Platform BI • Provisioning • Agentic Workflows • Enterprise Data Governance")
 
     st.markdown("""
-    ## About Me
-    I’m a **Data & BI Architect with hands on Programming skillset** turned **GenAI Solutions Architect**. I build agentic systems that solve real-world,
-    enterprise-grade problems—fast. My portfolio showcases Agentic AI solutions to real world enterprise problems, which are 
-                 
-        - ** Different Teams Different Tech Stacks hard to standardized : Provisional Agent 
-        - ** Different Teams Different BI Tools hard to Achieve Single Version of Truth because definitions can and will drift : KPI Drift Hunter
-
-    ### What I optimize for
-    - **Speed with guardrails**: Playwright automation + Supabase Storage/DB + RLS-friendly patterns.
-    - **Repeatability**: “Diagrams as code,” infra as config, deterministic folder/layout conventions.
-    - **Observability**: hashes, manifests, and DB facts for traceability & audits.
+    ## Solving Common Enterprise Data Challenges
+    In modern data and BI environments, the same issues keep showing up: fragmented tech stacks, conflicting KPIs, inconsistent queries, and lack of standardization. These slow decisions, increase cost, and limit scale.
+    With deep experience across the data lifecycle, I build agentic AI systems that tackle these problems head-on—fast, intelligently, and with measurable business value.
     """)
 
-    st.divider()
+    # First row
+    col1, col2 = st.columns(2, gap="small")
 
-    c1, c2 = st.columns(2, gap="large")
-
-    with c1:
+    with col1:
         st.subheader("🚀 Provisioning Agent")
-        st.markdown("""
-    **Problem:** Centralized teams often struggle to ensure consistent technology stacks and environment standards across departments.  
-    **Solution:** A self-service portal, governed by the central team, that provisions dev/qa/prod workspaces along with secrets, storage buckets, and database artifacts in a standardized manner.
+        st.markdown(
+            "Enables centralized teams to define, manage, and enforce environment standards. "
+            "It generates Docker-based config files so teams can spin up consistent, self-contained ecosystems on demand—at any scale."
+            "<br/><span style='color:#5f6ad2'><em>Guided by agentic AI that adapts to context and usage—beyond static templates.</em></span>",
+            unsafe_allow_html=True
+        )
+        with st.expander("Built For", expanded=False):
+            st.markdown("""
+            - 📊 Business leaders who want governance without blocking delivery.  
+            - 🧠 AI practitioners building dynamic, policy-driven environments.  
+            - ⚙️ Engineers who value reusable infra scaffolding.  
+            - 🧑‍💼 Capability reviewers evaluating GenAI + platform automation experience.
+            """)
 
-    **Highlights**
-    - Predefined templates for teams and environments (with opinionated defaults).  
-    - Automated secrets injection (service-role vs anon keys).  
-    - Administrative pages for **Console**, **Reports**, and **Artifacts**.  
-
-    **Try it**
-    - **ProvisionAgent → Provision** (create a new environment)  
-    - **Admin → Console / Reports / Artifacts** (review provisioned outputs)  
-        """)
-
-    with c2:
+    with col2:
         st.subheader("📊 KPI Drift Hunter")
-        st.markdown("""
-    **Problem:** The same KPI can appear inconsistent across platforms (e.g., Power BI vs Tableau).  
-    **Solution:** An agentic pipeline that automates **Capture → Extract → Persist → Compare**, ensuring KPI alignment across BI tools.
+        st.markdown(
+            "Flags KPI inconsistencies across BI tools via automated capture and comparison. "
+            "Detects drift in seconds—making issues visible, actionable, and easier to resolve."
+            "<br/><span style='color:#5f6ad2'><em>Uses agentic checks that interpret visual and semantic signals—not just rule-based diffs.</em></span>",
+            unsafe_allow_html=True
+        )
+        with st.expander("Built For", expanded=False):
+            st.markdown("""
+            - 📊 Stakeholders relying on consistent, cross-platform reporting.  
+            - 🧠 Builders designing intelligent validation pipelines.  
+            - ⚙️ Devs maintaining aligned definitions across tools.  
+            - 🧑‍💼 Reviewers assessing impact of applied GenAI in analytics.
+            """)
 
-    **Highlights**
-    - Headless capture (full-page and per-widget crops).  
-    - Automated storage in Supabase (**kpidrifthunter** bucket).  
-    - Database facts (`kdh_screengrab_dim`, `kdh_widget_dim`) with SHA-256 deduplication.  
-    - Designed for OCR and shape-matching extensions to detect KPI drift.  
+    # tighten space between rows
+    st.markdown("<div style='margin-top:-1rem;'></div>", unsafe_allow_html=True)
 
-    **Try it**
-    - **KPI Drift Hunter → Run and Extract** (process public URLs)  
-    - **KPI Drift Hunter → Parse and Compare** (coming soon in V1)  
-        """)
+    # Second row
+    col3, col4 = st.columns(2, gap="small")
 
-    st.divider()
-    st.subheader("Tech Stack at a Glance")
-    st.markdown("""
-    **Python, Playwright, Streamlit, Supabase (Storage + Postgres/RLS), Pandas, Mermaid, Diagrams-as-Code**  
-    **Next Up:** OCR (Tesseract/PaddleOCR), similarity checks (DTW/correlation), and glossary-linked KPI definitions.  
-    """)
+    with col3:
+        st.subheader("🧠 Query Pattern Analyzer *(In Progress)*")
+        st.markdown(
+            "Analyzes query logs to uncover inefficiencies and high-frequency patterns. "
+            "Enables centralized teams to adapt warehouse structures—like summary tables or rollups—to match how data is actually used."
+            "<br/><span style='color:#5f6ad2'><em>Applies agentic pattern recognition across teams and time—no manual rule tuning.</em></span>",
+            unsafe_allow_html=True
+        )
+        with st.expander("Built For", expanded=False):
+            st.markdown("""
+            - 📊 Data owners managing cost and performance tradeoffs.  
+            - 🧠 Analysts and architects automating pattern recognition.  
+            - ⚙️ Platform teams tuning storage and compute models.  
+            - 🧑‍💼 Leadership or reviewers looking at usage-informed design thinking.
+            """)
 
+    with col4:
+        st.subheader("🎨 BI Standards Enforcer *(In Progress)*")
+        st.markdown(
+            "Scans dashboards for design inconsistencies across BI tools. "
+            "Surfaces violations of UI standards and can be run on-demand to support visual governance at scale."
+            "<br/><span style='color:#5f6ad2'><em>Performs agentic review of layout and metadata and adapts as standards evolve.</em></span>",
+            unsafe_allow_html=True
+        )
+        with st.expander("Built For", expanded=False):
+            st.markdown("""
+            - 📊 Execs and stakeholders who expect dashboard consistency.  
+            - 🧠 Designers and builders exploring rule-driven UI enforcement.  
+            - ⚙️ BI teams tired of manual UI audits.  
+            - 🧑‍💼 Reviewers measuring end-user experience at scale.
+            """)
+
+    st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
     st.info("Tip: Each page in the left nav is a demo scenario. Open a report link, click **Run**, and inspect stored artifacts.")
 
 # ---- Pages ----
@@ -86,8 +121,9 @@ provision  = st.Page("pages/1_provision.py",               title="Provision",   
 # KPI Drift Hunter Agent group
 kpi_drift  = st.Page("kpidrifthunteragent_homepage.py",    title="KPI Drift Hunter",      icon=":material/analytics:")
 kpi_drift_runandextract   = st.Page("pages/23_kpidrift_runandextract.py",  title="Run and Extract",  icon=":material/play_circle:")
-kpi_drift_parseandcompare = st.Page("pages/24_kpidrift_parseandcompare.py",title="Parse and Compare",icon=":material/play_circle:")
+kpi_drift_parseandcompare = st.Page("pages/24_kpidrift_parseandcompare.py",title="Parse and Compare",icon=":material/compare_arrows:")
 kpi_drift_report          = st.Page("pages/26_kpidrift_reports.py",        title="Report",           icon=":material/insights:")
+kpi_drift_documentation         = st.Page("pages/25_kpidrift_documentation.py",        title="Documentation",           icon=":material/library_books:")
 
 # Admin children
 console    = st.Page("pages/2_admin.py",                   title="Console",         icon=":material/terminal:")
@@ -102,7 +138,7 @@ nav = st.navigation(
     {
         "Home": [home],
         "ProvisionAgent": [prov_agent, provision],
-        "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_runandextract, kpi_drift_parseandcompare, kpi_drift_report],
+        "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_runandextract, kpi_drift_parseandcompare, kpi_drift_report,kpi_drift_documentation],
         "Admin · ProvisionalAgent": [console, reports, artifacts],
         "Account": [logout],
     },
