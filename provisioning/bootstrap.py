@@ -1,41 +1,46 @@
-# provisioning/bootstrap.py
 from __future__ import annotations
-import subprocess
+import os, sys, subprocess
 
-def _install_chromium():
-    subprocess.run(
-        ["python", "-m", "playwright", "install", "chromium"],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+def _run(cmd):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r.returncode, (r.stdout or "") + ("\n" + r.stderr if r.stderr else "")
 
 def _can_launch() -> bool:
     try:
         from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            b = pw.chromium.launch(headless=True)
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
             b.close()
         return True
-    except Exception as e:
-        s = str(e)
-        # Return False when the browser binary is missing
-        return not ("Executable doesn't exist" in s or "headless_shell" in s)
+    except Exception:
+        return False
 
 def ensure_playwright_ready():
-    """Ensure Chromium binary is available; install if a launch test fails."""
+    # Use a cache path that works on Cloud
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.expanduser("~/.cache/ms-playwright"))
+
     try:
         import playwright  # noqa: F401
     except Exception:
         raise RuntimeError("Missing dependency: add 'playwright' to requirements.txt")
+
     if _can_launch():
         return
-    _install_chromium()
+
+    # Install using the SAME interpreter Streamlit runs
+    code, out = _run([sys.executable, "-m", "playwright", "install", "chromium"])
+    if code != 0:
+        try:
+            import streamlit as st
+            st.error("Playwright browser install failed.")
+            st.code(out)
+        except Exception:
+            pass
+        raise RuntimeError("playwright install chromium failed")
+
     if not _can_launch():
-        raise RuntimeError("Chromium install attempted, but Playwright still cannot launch.")
+        raise RuntimeError("Chromium installed but still cannot launch.")
 
-# Backward-compatible alias so existing imports don’t break
+# Back-compat alias if some files still import the old name
 ensure_playwright_installed = ensure_playwright_ready
-
 __all__ = ["ensure_playwright_ready", "ensure_playwright_installed"]

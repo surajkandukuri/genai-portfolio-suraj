@@ -6,7 +6,7 @@ playwright_test
 .vscode/
 __pycache__/
 .streamlit/secrets.toml
-.streamlit/config.toml
+!.streamlit/config.toml
 .streamlit/*.toml
 tableau_connectivity_test
 matrix_test
