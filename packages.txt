@@ -22,4 +22,4 @@ libpangocairo-1.0-0
 libcairo2
 libasound2
 fonts-liberation
-ttf-dejavu
+fonts-dejavu-core
