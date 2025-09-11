@@ -137,9 +137,9 @@ logout     = st.Page("pages/9_Logout.py",                  title="Logout",      
 nav = st.navigation(
     {
         "Home": [home],
-        "ProvisionAgent": [prov_agent, provision],
+        "ProvisionAgent": [prov_agent, provision,console, reports, artifacts],
         "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_runandextract, kpi_drift_parseandcompare, kpi_drift_report,kpi_drift_documentation],
-        "Admin · ProvisionalAgent": [console, reports, artifacts],
+        #"Admin · ProvisionalAgent": [console, reports, artifacts],
         "Account": [logout],
     },
     position="sidebar",
