@@ -5,12 +5,9 @@ import os
 import json
 import datetime as dt
 from typing import Dict, Optional, Tuple
-from urllib.parse import urlparse
-from supabase import create_client
-import os
 
-from provisioning.bootstrap import ensure_playwright_ready
-ensure_playwright_ready()
+# NOTE: This orchestrator does not launch Playwright itself.
+# Providers that use Playwright should call ensure_playwright_ready() inside.
 
 # Try Cloud (trial) and Public extractors
 try:
@@ -59,11 +56,11 @@ def _scan_for_views(path_like: str):
 def _parse_tableau_slugs(url: str):
     from urllib.parse import urlparse
     p = urlparse(url)
-    # try the normal path first
+    # normal path first
     wb, view = _scan_for_views(p.path)
     if wb:
         return wb, view
-    # then the fragment (Cloud puts /views/... after '#')
+    # fallback: fragment (Cloud embeds often put /views/... after '#')
     frag_path = p.fragment
     if frag_path and not frag_path.startswith('/'):
         frag_path = '/' + frag_path
@@ -82,9 +79,9 @@ def extract(
     limit_views: Optional[int] = None,
 ) -> Dict:
     """
-    Orchestrator: Cloud (trial) → Public fallback.
+    Orchestrator: try Tableau Cloud (trial) → fallback to Tableau Public.
     Fixes:
-      - Parse workbook slug from URL fragment (#) when needed.
+      - Parse workbook/view slugs from URL fragment (#) when needed.
       - Pass slug to Cloud extractor.
     """
     now = _utcnow()

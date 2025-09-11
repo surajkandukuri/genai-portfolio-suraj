@@ -7,10 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PWError
 from supabase import create_client, Client
-from provisioning.bootstrap import ensure_playwright_ready
-ensure_playwright_ready()
-
-
+from provisioning.bootstrap import ensure_playwright_ready  # no call at import time
 
 # Quality helpers (shared)
 from provisioning.a2_kpidrift_capture.a2_kpidrift_quality import (
@@ -24,7 +21,7 @@ def _sget(*keys, default=None):
         v = os.getenv(k)
         if v:
             return v
-    # Streamlit not guaranteed to be present when importing as a module
+    # Streamlit may not be present when importing as a module
     try:
         import streamlit as st  # optional
         for k in keys:
@@ -279,20 +276,27 @@ def extract(url: str, session_folder: str, viewport=(1920,1080), scale=2.0, max_
     Inserts rows into kdh_screengrab_dim and kdh_widget_dim.
     Returns manifest (compatible with the page's current expectations).
     """
+    # Ensure Playwright browser is available (Cloud-safe)
+    ensure_playwright_ready()
+
     base_local = _ensure_outdir(Path("./screenshots") / session_folder)
     outdir_widgets = _ensure_outdir(base_local / "widgets")
-    ensure_playwright_ready()
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+
     platform = "powerbi"
     ts = _nowstamp()
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        ctx = browser.new_context(viewport={"width": viewport[0], "height": viewport[1]},
-                                  device_scale_factor=scale)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
+        ctx = browser.new_context(
+            viewport={"width": viewport[0], "height": viewport[1]},
+            device_scale_factor=scale
+        )
         page = ctx.new_page()
 
+        # Navigate
         page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         try:
             page.wait_for_load_state("networkidle", timeout=6_000)
@@ -363,7 +367,8 @@ def extract(url: str, session_folder: str, viewport=(1920,1080), scale=2.0, max_
                         x, y = int(bb["x"]), int(bb["y"]); w, h = int(bb["width"]), int(bb["height"])
                         if w < MIN_W or h < MIN_H: continue
                         candidates.append((sel, (x, y, w, h), _kind_of(sel)))
-                    except Exception: pass
+                    except Exception:
+                        pass
             except PWError:
                 pass
 
@@ -403,15 +408,14 @@ def extract(url: str, session_folder: str, viewport=(1920,1080), scale=2.0, max_
             # Quality score & suffix
             qinfo = score_widget(
                 selector_kind=kind,
-                bbox_xywh=(pw_, ph_, pw_, ph_),  # scoring on crop size; width= pw_, height= ph_
-                title_present=bool(title.strip()),
+                bbox_xywh=(px, py, pw_, ph_),  # correct (x, y, w, h)
+                title_present=bool((title or "").strip()),
             )
-            # Note: fix bbox order (x,y,w,h) for scoring if you prefer exact; it doesn't affect classification here.
 
             widget_filename = append_quality_suffix(base_filename, qinfo["quality"])
             local_path = outdir_widgets / widget_filename
 
-            # Crop from page via clip (consistent with your original)
+            # Crop via clip (consistent with your approach)
             page.screenshot(path=str(local_path), clip={"x": px, "y": py, "width": pw_, "height": ph_})
 
             # Upload
@@ -454,7 +458,10 @@ def extract(url: str, session_folder: str, viewport=(1920,1080), scale=2.0, max_
                 "quality_score": qinfo["quality_score"],
             })
 
-        ctx.close(); browser.close()
+        # cleanup
+        page.close()
+        ctx.close()
+        browser.close()
 
     return {
         "url": url,
