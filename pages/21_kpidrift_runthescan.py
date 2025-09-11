@@ -1,33 +1,36 @@
 # pages/21_kpidrift_runthescan.py
 from __future__ import annotations
+import sys, pathlib, platform, asyncio, streamlit as st
+
+# make repo root importable when running from /pages
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # --- Windows asyncio subprocess fix (must be before Playwright is used) ---
-import sys, asyncio
-import platform
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-import os, re, uuid, hashlib, traceback
-import datetime as dt
-from pathlib import Path
-from typing import List, Tuple
-
-import streamlit as st
-from supabase import create_client, Client
-
-from provisioning.theme import page_header
-from provisioning.ui import card
-
-# Provider-specific capture functions
-from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
-from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
 from provisioning.bootstrap import ensure_playwright_ready
-ensure_playwright_ready()
 
 @st.cache_resource(show_spinner=False)
 def _bootstrap():
     ensure_playwright_ready()
 _bootstrap()
+
+# ...now the rest of your imports:
+import os, re, uuid, hashlib, traceback
+import datetime as dt
+from pathlib import Path
+from typing import List, Tuple
+
+from supabase import create_client, Client
+from provisioning.theme import page_header
+from provisioning.ui import card
+from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
+from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
+
+
 
 
 

@@ -3,11 +3,10 @@
 # - UI for selecting URLs
 # - Classifies URL → dispatches to Power BI or Tableau extractor
 # - Keeps your local manifest saving & output display
-# - No feature loss vs. your previous single-file version
 
 from __future__ import annotations
 
-import os, json
+import os, json, sys, pathlib, platform, asyncio
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -15,15 +14,29 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 
-# === NEW: provider dispatch imports ==========================================
+# --- ensure repo root is on sys.path when running from /pages -----------------
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# --- Windows asyncio subprocess fix (safe no-op on Linux/Cloud) ---------------
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+# --- Playwright bootstrap (must run BEFORE importing extractors) --------------
+from provisioning.bootstrap import ensure_playwright_ready
+
+@st.cache_resource(show_spinner=False)
+def _bootstrap():
+    ensure_playwright_ready()
+_bootstrap()
+
+# === provider dispatch imports (after bootstrap) ==============================
 from provisioning.a2_kpidrift_widgetextractor_power_bi import extract as extract_pbi
 from provisioning.a2_kpidrift_widgetextractor_tableau import extract as extract_tbl
-# at the very top of pages/21_kpidrift_runthescan.py and pages/22_kpidrift_widgetextractor.py
-from provisioning.bootstrap import ensure_playwright_ready
-ensure_playwright_ready()
 
-
-import inspect, sys
+# (optional) debug: intrial Tableau API helper (doesn't use Playwright)
+import inspect
 import provisioning.a2_kpidrift_capture.a2_kpidrift_widgetextractor_tableau_intrial as intrial
 print("INTRIAL FILE:", intrial.__file__)
 print("INTRIAL SIG :", inspect.signature(intrial.capture_tableau_api))
