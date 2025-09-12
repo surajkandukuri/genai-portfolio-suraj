@@ -13,6 +13,7 @@ from supabase import create_client, Client
 # --- Capture providers (RUN) -------------------------------------------------
 from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
 from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
+import streamlit.components.v1 as components
 
 # --- Persist helpers (upload → DB) -------------------------------------------
 from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import (
@@ -100,8 +101,11 @@ def _storage_signed_url(bucket: str, key: str, ttl_sec=3600) -> str:
 
 # ─────────── Demo video (public URL) ───────────
 def _demo_video_url() -> str:
-    # Replace with your Supabase public URL (plays directly; supports seek/rewind)
-    return "https://<YOUR-SUPABASE-PUBLIC-URL>/kpi_drift_demo_compressed.mp4"
+    # Use the exact public object URL (no signed URL). Must be HTTPS.
+    # Format for Supabase public files:
+    # https://<PROJECT>.supabase.co/storage/v1/object/public/<bucket>/<path/to/file>
+    return "https://<YOUR_PROJECT>.supabase.co/storage/v1/object/public/kpidrifthunter/assets/kpi_drift_demo.mp4"
+
 
 
 # ───────────────────────────── Safe screengrab upsert ────────────────────────
@@ -257,13 +261,13 @@ st.set_page_config(page_title="KPI Drift — Run & Extract", page_icon="🧩", l
 st.title("🧩 KPI Drift — Run & Extract")
 st.caption("2×2 grid: Public / Via API × Power BI / Tableau. Every box supports Run & Extract.")
 
-# Examples (single source of truth for sample buttons)
+# Examples for the sample buttons
 SAMPLE_URLS: Dict[str, str] = {
     "powerbi": "https://app.powerbi.com/view?r=eyJrIjoiNWU3OTQxZTItMWFiMi00NWE4LTk5NGQtYjllMjc1ODFjNjlhIiwidCI6Ijg5YTg4MjgwLTFhMDQtNGNlZi05NWQ5LWE3YTI1NTYyMzc4ZCJ9",
     "tableau": "https://us-east-1.online.tableau.com/#/site/help-811dc8baf4/views/Dup-OlistE-CommerceDashboard/OlistOrdersOverview",
 }
 
-# Layout: examples (left) and demo video (right) — video only in the white box
+# Top area: examples (left) and demo video (right)
 left, right = st.columns([3, 2], vertical_alignment="top")
 with left:
     st.markdown(
@@ -276,11 +280,74 @@ This tool lets you capture and extract widgets from any public **Power BI** or *
 """
     )
 with right:
-    with st.container(border=True):
-        st.video(_demo_video_url(), start_time=0)
+    VIDEO_URL = _demo_video_url()  # must return a PUBLIC https mp4
+    st.video("https://cdsmbjgvdgmckgjxzpqr.supabase.co/storage/v1/object/sign/kpidrifthunter/assets/kpi_drift_demo.mp4"
+             ,autoplay=True,
+              muted=True) # Replace with your YouTube video URL
+   
 
 
-st.divider()
+# ───────────── Header row: Public | Via API with info banner ─────────────
+lab, hdr_pub, sep, hdr_api_col = st.columns([0.8, 2, 0.07, 2])
+lab.write("")
+
+# Public header (styled to match Via API)
+hdr_pub.markdown(
+    """
+    <div style='font-size:1.25rem;font-weight:600;line-height:1.6;display:flex;align-items:flex-start;'>
+        Public
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Inline info banner (above Via API)
+st.markdown(
+    """
+    <div style="
+        background-color:#EFF6FF;
+        border:1px solid #BFDBFE;
+        border-radius:6px;
+        padding:8px 12px;
+        font-size:14px;
+        font-family: 'Inter', sans-serif;
+        color:#1E3A8A;
+        margin:.5rem 0;
+    ">
+        ℹ️ API mode requires <b>Tableau Server/Cloud</b> with an account that has
+        <b>API export permissions</b>. Tableau Public dashboards don’t support this.
+        This site does <b>NOT</b> store any of your information.
+        The <b>video snippet</b> above shows a sample of how this works.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+with sep:
+    st.markdown(
+        "<div style='display:flex;align-items:stretch;justify-content:center;'>"
+        "<div style='width:1px;background:#E2E8F0;min-height:32px;'></div>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+with hdr_api_col:
+    st.markdown(
+        """
+        <div style='display:flex;gap:.5rem;align-items:flex-start;'>
+          <div style='font-size:1.25rem;font-weight:600;line-height:1.6;'>Via API</div>
+          <span style='display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:18px;border:1px dashed #CBD5E1;background:#F8FAFC;color:#6B7280;white-space:nowrap;'>
+            Power BI is WIP
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown(
+    "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
+    unsafe_allow_html=True
+)
 
 # ───────────── Session scaffolding ─────────────
 session_id = st.session_state.get("kdh_session") or str(uuid.uuid4())
@@ -293,14 +360,13 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
 
     st.markdown(f"**{title}**")
 
-    # URL input (value can be prefilled via row-level button before inputs render)
     url_key = f"url_{cell_key}"
     st.text_input("URL", key=url_key, placeholder="https://…", label_visibility="collapsed")
 
     if wip_hint:
         st.caption(f"⚠️ {wip_hint}")
 
-    # Via API expanders (Tableau real; Power BI visible but WIP)
+    # Determine API readiness
     api_ready = True
     if is_cloud and provider == "tableau":
         with st.expander("Configure Tableau Server (one-time, not stored)"):
@@ -329,18 +395,24 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
     if is_cloud and provider == "powerbi":
         with st.expander("Power BI API (WIP) — configuration preview"):
             st.caption("This section is a placeholder. API actions are disabled in this build.")
-        api_ready = False  # actions disabled
+        api_ready = False  # actions disabled for PBI API
 
     prog = st.empty(); step = st.empty(); grade_badge = st.empty(); outbox = st.empty()
 
+    # TEMP enable: if a sample button was used for this exact cell
+    force_key = f"force_enable_{cell_key}"  # e.g., force_enable_api_tbl
+    force_enable = bool(st.session_state.get(force_key, False))
+
     b1, b2 = st.columns([1,1])
-    run_disabled = disable_actions or (is_cloud and not api_ready)
-    ext_disabled = disable_actions or (is_cloud and not api_ready)
+    run_disabled = disable_actions or (is_cloud and not (api_ready or force_enable))
+    ext_disabled = disable_actions or (is_cloud and not (api_ready or force_enable))
     run_clicked = b1.button("Run", key=f"run_{cell_key}", use_container_width=True, disabled=run_disabled)
     ext_clicked = b2.button("Extract", key=f"ext_{cell_key}", type="primary", use_container_width=True, disabled=ext_disabled)
 
-    if run_disabled and is_cloud:
-        st.caption("Enable by adding credentials in the expander above." if provider=="tableau" else "Power BI via API is WIP (disabled).")
+    if run_disabled and is_cloud and provider == "tableau":
+        st.caption("Enable by adding credentials in the expander above (or use the sample URL button to demo).")
+    if run_disabled and is_cloud and provider == "powerbi":
+        st.caption("Power BI via API is WIP (disabled).")
 
     def _advance(i, n, txt): prog.progress(int((i/n)*100)); step.caption(txt)
 
@@ -354,7 +426,7 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
         st.session_state["kdh_status"] = {"headline": title, "summary": summary_html,
                                           "storage_prefix": storage_prefix, "full_image_url": full_image_url}
 
-    if (run_clicked or ext_clicked) and not (disable_actions or (is_cloud and not api_ready)):
+    if (run_clicked or ext_clicked) and not (disable_actions or (is_cloud and not (api_ready or force_enable))):
         url = (st.session_state.get(url_key) or "").strip()
         if not url:
             st.warning("Paste a URL first."); return
@@ -379,13 +451,19 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
                     link = f"<div><a href='{res['full_signed']}' target='_blank'>Open full image</a></div>" if res.get("full_signed") else ""
                     _finalize(summ+link, res.get("widgets", []), res["storage_prefix"], res.get("full_signed",""), method="Public"); _advance(9, N, "Done")
                 else:  # Tableau Cloud RUN (API)
+                    if not api_ready:
+                        _finalize("⚠️ Tableau API creds missing (enter them in the expander above).", [], "", "", method="Via API")
+                        return
                     creds = st.session_state["tbl_api_creds"].copy()
                     with _temp_tableau_env(creds):
                         _advance(2, N, "Signing in to Tableau Server/Cloud…")
                         res = _extract_cloud_tableau(url=url, session_prefix=f"tableau_{_nowstamp()}")
                     widgets = res.get("widgets", []); storage_prefix = res.get("storage_prefix") or res.get("session_folder","")
                     _advance(8, N, "Grading…"); summ = f"✅ **RUN (API) complete** → `{storage_prefix}` (bucket: {KDH_BUCKET})"
-                    _finalize(summ, widgets, storage_prefix, "", method="Via API"); _advance(9, N, "Done")
+                    _finalize(summ, widgets, storage_prefix, "", method="Via API")
+                    if is_cloud and provider == "tableau" and force_enable:
+                        st.session_state[force_key] = False  # clear temp enable
+                    _advance(9, N, "Done")
 
             if ext_clicked:
                 sess = f"{provider}_{_nowstamp()}"
@@ -394,92 +472,34 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
                 elif provider == "tableau" and not is_cloud:
                     _advance(2, N, "Launching browser…"); res = _extract_public_tableau(url, sess); method = "Public"
                 else:
+                    if not api_ready:
+                        _finalize("⚠️ Tableau API creds missing (enter them in the expander above).", [], "", "", method="Via API")
+                        return
                     creds = st.session_state["tbl_api_creds"].copy()
                     with _temp_tableau_env(creds):
                         _advance(2, N, "Signing in to Tableau Server/Cloud…"); res = _extract_cloud_tableau(url=url, session_prefix=sess)
                     method = "Via API"
                 _advance(8, N, "Grading…"); widgets = res.get("widgets", []); storage_prefix = res.get("storage_prefix") or res.get("session_folder","")
                 summ = f"✅ **EXTRACT complete** → `{storage_prefix}` (widgets: {len(widgets)})"
-                _finalize(summ, widgets, storage_prefix, "", method=method); _advance(9, N, "Done")
+                _finalize(summ, widgets, storage_prefix, "", method=method)
+                if is_cloud and provider == "tableau" and force_enable:
+                    st.session_state[force_key] = False  # clear temp enable
+                _advance(9, N, "Done")
 
         except Exception as e:
             tb = traceback.format_exc()
             st.error(f"Failed: {e}\n\n```traceback\n{tb}\n```")
             _log(f"ERROR: {e}")
 
-# ───────────── Rows with vertical & horizontal separators ────────────────────
+# ───────────── Rows ─────────────
 
-# Headers (Public | Via API)
-lab, hdr_pub, sep, hdr_api_col = st.columns([0.8, 2, 0.07, 2])
-lab.write("")
-
-# Public header
-hdr_pub.markdown(
-    """
-    <div style='font-size:1.25rem;font-weight:600;line-height:1.6;display:flex;align-items:flex-start;'>
-        Public
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# Info banner spanning both
-st.markdown(
-    """
-    <div style="
-        background-color:#EFF6FF;
-        border:1px solid #BFDBFE;
-        border-radius:6px;
-        padding:8px 12px;
-        font-size:14px;
-        font-family: 'Inter', sans-serif;
-        color:#1E3A8A;
-        margin:.5rem 0;
-    ">
-        ℹ️ API mode requires <b>Tableau Server/Cloud</b> with an account that has
-        <b>API export permissions</b>. Tableau Public dashboards don’t support this. 
-        This site does <b>NOT</b> store any of your information. 
-        The <b>video snippet</b> above shows a sample of how this works.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# Separator between columns
-with sep:
-    st.markdown(
-        "<div style='display:flex;align-items:stretch;justify-content:center;'>"
-        "<div style='width:1px;background:#E2E8F0;min-height:32px;'></div>"
-        "</div>",
-        unsafe_allow_html=True
-    )
-
-# Via API header
-with hdr_api_col:
-    st.markdown(
-        """
-        <div style='display:flex;gap:.5rem;align-items:flex-start;'>
-          <div style='font-size:1.25rem;font-weight:600;line-height:1.6;'>Via API</div>
-          <span style='display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:18px;border:1px dashed #CBD5E1;background:#F8FAFC;color:#6B7280;white-space:nowrap;'>
-            Power BI is WIP
-          </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-# Bottom border
-st.markdown(
-    "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
-    unsafe_allow_html=True
-)
-
-# Row: Power BI (row-level sample button — fills BOTH cells BEFORE inputs)
+# Row: Power BI
 lab, pub, sep, api = st.columns([0.8, 2, 0.07, 2])
 lab.markdown("#### Power BI")
 if st.button("Use Sample URL (Power BI)", key="use_sample_row_pbi"):
     st.session_state["url_pub_pbi"] = SAMPLE_URLS["powerbi"]
     st.session_state["url_api_pbi"] = SAMPLE_URLS["powerbi"]
+    # We keep Power BI API WIP (disabled), so no force-enable here
     st.rerun()
 with pub:
     render_cell("pub_pbi", "Public", is_cloud=False, provider="powerbi")
@@ -494,22 +514,23 @@ with api:
         disable_actions=True,
         wip_hint="Power BI via API is Work In Progress (buttons disabled)."
     )
-st.markdown(
-    "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
-    unsafe_allow_html=True
-)
+st.markdown("<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>", unsafe_allow_html=True)
 
-# Row: Tableau (row-level sample button — fills BOTH cells BEFORE inputs)
+# Row: Tableau  (sample button force-enables Via API run/extract)
 lab2, pub2, sep2, api2 = st.columns([0.8, 2, 0.07, 2])
 lab2.markdown("#### Tableau")
 if st.button("Use Sample URL (Tableau)", key="use_sample_row_tbl"):
     st.session_state["url_pub_tbl"] = SAMPLE_URLS["tableau"]
     st.session_state["url_api_tbl"] = SAMPLE_URLS["tableau"]
+    st.session_state["force_enable_api_tbl"] = True  # temp-enable Via API buttons
     st.rerun()
 with pub2:
     render_cell("pub_tbl", "Public", is_cloud=False, provider="tableau")
 with sep2:
-    st.markdown("<div style='display:flex;align-items:stretch;justify-content:center;'><div style='width:1px;background:#E2E8F0;'></div></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='display:flex;align-items:stretch;justify-content:center;'><div style='width:1px;background:#E2E8F0;'></div></div>",
+        unsafe_allow_html=True
+    )
 with api2:
     render_cell("api_tbl", "Via API", is_cloud=True, provider="tableau")
 
