@@ -1,16 +1,16 @@
 # pages/23_kpidrift_runandextract.py
-# KPI Drift Hunter — 2×2 Grid with table-like separators (Public | Via API) × (Power BI | Tableau)
-# Adds explicit "WIP" labeling ONLY for Cloud • Power BI (buttons visible but disabled)
+# KPI Drift Hunter — 2×2 Grid (Public | Via API) × (Power BI | Tableau)
 
 from __future__ import annotations
-import os, re, json, uuid, traceback
+
+import os, re, uuid, traceback, contextlib
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 import streamlit as st
 from supabase import create_client, Client
 
-# --- Capture providers --------------------------------------------------------
+# --- Capture providers (RUN) -------------------------------------------------
 from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
 from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
 
@@ -20,7 +20,7 @@ from provisioning.a2_kpidrift_capture.a2_kpidrift_persist import (
     image_wh,
 )
 
-# --- Widget extractors --------------------------------------------------------
+# --- Widget extractors (EXTRACT) ---------------------------------------------
 from provisioning.a2_kpidrift_widgetextractor_power_bi import extract as extract_pbi
 from provisioning.a2_kpidrift_widgetextractor_tableau import extract as extract_tbl
 
@@ -93,7 +93,16 @@ def _storage_signed_url(bucket: str, key: str, ttl_sec=3600) -> str:
     try:
         return sb.storage.from_(bucket).create_signed_url(key_only, ttl_sec)["signedURL"]
     except Exception:
-        return ""
+        try:
+            return sb.storage.from_(bucket).get_public_url(key_only)
+        except Exception:
+            return ""
+
+# ─────────── Demo video (public URL) ───────────
+def _demo_video_url() -> str:
+    # Replace with your Supabase public URL (plays directly; supports seek/rewind)
+    return "https://<YOUR-SUPABASE-PUBLIC-URL>/kpi_drift_demo_compressed.mp4"
+
 
 # ───────────────────────────── Safe screengrab upsert ────────────────────────
 def _safe_upsert_screengrab(row: Dict) -> Dict:
@@ -218,181 +227,296 @@ def _extract_public_tableau(url: str, session_prefix: str) -> Dict:
     return extract_tbl(url=url, session_folder=session_prefix, viewport=(1920,1080), scale=2.0, max_widgets=80)
 
 def _extract_cloud_tableau(url: str, session_prefix: str) -> Dict:
+    # Same extractor; env tells it to use Server/Cloud
     return extract_tbl(url=url, session_folder=session_prefix, viewport=(1920,1080), scale=2.0, max_widgets=80)
+
+# ─────────── Temporary env injection (session-only creds; NOT stored) ───────────
+@contextlib.contextmanager
+def _temp_tableau_env(creds: Dict[str, str]):
+    """
+    Temporarily set TABLEAU_* env vars for a single call.
+    Values come from session (user-entered), never logged, never persisted.
+    """
+    keys = ["TABLEAU_SERVER_URL", "TABLEAU_SITE_ID", "TABLEAU_USERNAME", "TABLEAU_PASSWORD"]
+    old = {k: os.getenv(k) for k in keys}
+    try:
+        for k in keys:
+            v = (creds or {}).get(k, "")
+            if v is not None:
+                os.environ[k] = str(v)
+        yield
+    finally:
+        for k in keys:
+            if old.get(k) is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old[k]
 
 # ─────────────────────────────── UI rendering ────────────────────────────────
 st.set_page_config(page_title="KPI Drift — Run & Extract", page_icon="🧩", layout="wide")
 st.title("🧩 KPI Drift — Run & Extract")
 st.caption("2×2 grid: Public / Via API × Power BI / Tableau. Every box supports Run & Extract.")
 
-# CSS for crisp table lines + badges
-st.markdown("""
-<style>
-.table-hline { height:1px; background:#E2E8F0; margin: 0.5rem 0 1rem 0; }
-.vline-wrap { display:flex; align-items:stretch; justify-content:center; }
-.vline { width:1px; background:#E2E8F0; min-height: 130px; margin-top: 0.5rem; }
-.cell-pad { padding-top: .25rem; }
-.badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; border:1px solid #CBD5E1; background:#F8FAFC; color:#334155; }
-.badge-wip { background:#F3F4F6; color:#6B7280; border-style:dashed; }
-.cell-title { font-weight: 600; margin-bottom: .35rem; }
-.hint { color:#64748B; font-size:12px; margin-top:.25rem; }
-</style>
-""", unsafe_allow_html=True)
+# Examples (single source of truth for sample buttons)
+SAMPLE_URLS: Dict[str, str] = {
+    "powerbi": "https://app.powerbi.com/view?r=eyJrIjoiNWU3OTQxZTItMWFiMi00NWE4LTk5NGQtYjllMjc1ODFjNjlhIiwidCI6Ijg5YTg4MjgwLTFhMDQtNGNlZi05NWQ5LWE3YTI1NTYyMzc4ZCJ9",
+    "tableau": "https://us-east-1.online.tableau.com/#/site/help-811dc8baf4/views/Dup-OlistE-CommerceDashboard/OlistOrdersOverview",
+}
 
-# One session id
-session_id = st.session_state.get("kdh_session") or str(uuid.uuid4())
-st.session_state["kdh_session"] = session_id
+# Layout: examples (left) and demo video (right) — video only in the white box
+left, right = st.columns([3, 2], vertical_alignment="top")
+with left:
+    st.markdown(
+        f"""
+This tool lets you capture and extract widgets from any public **Power BI** or **Tableau** dashboard URL—so you can validate, compare, or track changes visually.  
 
-# Secrets status (Tableau)
-tbl_ok = all([
-    bool(_sget("TABLEAU_SERVER_URL")),
-    bool(_sget("TABLEAU_SITE_ID")),
-    bool(_sget("TABLEAU_USERNAME")),
-    bool(_sget("TABLEAU_PASSWORD")),
-])
-with st.container():
-    c1, c2 = st.columns([1,3])
-    with c1: st.markdown("**Secrets**")
-    with c2:
-        if tbl_ok:
-            st.success("Tableau API • Connected", icon="🔐")
-        else:
-            missing = [k for k in ["TABLEAU_SERVER_URL","TABLEAU_SITE_ID","TABLEAU_USERNAME","TABLEAU_PASSWORD"] if not _sget(k)]
-            st.warning(f"Tableau API • Missing: {', '.join(missing)}", icon="⚠️")
+**Example dashboards you can try:**  
+- Power BI: [Sample Dashboard]({SAMPLE_URLS['powerbi']})  
+- Tableau: [Sample Dashboard]({SAMPLE_URLS['tableau']})
+"""
+    )
+with right:
+    with st.container(border=True):
+        st.video(_demo_video_url(), start_time=0)
+
 
 st.divider()
 
-# Header row (adds a vertical separator + WIP badge note ONLY for Power BI)
-lab, hdr_pub, sep, hdr_api = st.columns([0.8, 2, 0.07, 2])
-lab.write("")  # spacer
-hdr_pub.markdown("### Public")
-with sep:
-    st.markdown("<div class='vline-wrap'><div class='vline' style='min-height:32px;'></div></div>", unsafe_allow_html=True)
-hdr_api.markdown("### Via API  <span class='badge badge-wip'>Power BI is WIP</span>", unsafe_allow_html=True)
+# ───────────── Session scaffolding ─────────────
+session_id = st.session_state.get("kdh_session") or str(uuid.uuid4())
+st.session_state["kdh_session"] = session_id
+st.session_state.setdefault("tbl_api_creds", {"TABLEAU_SERVER_URL":"","TABLEAU_SITE_ID":"","TABLEAU_USERNAME":"","TABLEAU_PASSWORD":""})
 
-# Horizontal line under header
-st.markdown("<div class='table-hline'></div>", unsafe_allow_html=True)
-
-# ---- Helper: single cell ----------------------------------------------------
+# ───────────── Helper: single cell (no per-cell sample buttons) ─────────────
 def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
                 *, disable_actions: bool=False, wip_hint: Optional[str]=None):
-    st.markdown(f"<div class='cell-title'>{title}</div>", unsafe_allow_html=True)
+
+    st.markdown(f"**{title}**")
+
+    # URL input (value can be prefilled via row-level button before inputs render)
+    url_key = f"url_{cell_key}"
+    st.text_input("URL", key=url_key, placeholder="https://…", label_visibility="collapsed")
+
     if wip_hint:
-        st.markdown(f"<span class='badge badge-wip'>WIP</span> <span class='hint'>{wip_hint}</span>", unsafe_allow_html=True)
-    url = st.text_input("URL", key=f"url_{cell_key}", placeholder="https://…", label_visibility="collapsed")
+        st.caption(f"⚠️ {wip_hint}")
+
+    # Via API expanders (Tableau real; Power BI visible but WIP)
+    api_ready = True
+    if is_cloud and provider == "tableau":
+        with st.expander("Configure Tableau Server (one-time, not stored)"):
+            cc1, cc2 = st.columns(2)
+            st.session_state["tbl_api_creds"]["TABLEAU_SERVER_URL"] = cc1.text_input(
+                "Server URL", value=st.session_state["tbl_api_creds"]["TABLEAU_SERVER_URL"], placeholder="https://YOUR-SERVER"
+            )
+            st.session_state["tbl_api_creds"]["TABLEAU_SITE_ID"]    = cc2.text_input(
+                "Site", value=st.session_state["tbl_api_creds"]["TABLEAU_SITE_ID"], placeholder="default"
+            )
+            cc3, cc4 = st.columns(2)
+            st.session_state["tbl_api_creds"]["TABLEAU_USERNAME"]   = cc3.text_input(
+                "Username", value=st.session_state["tbl_api_creds"]["TABLEAU_USERNAME"]
+            )
+            st.session_state["tbl_api_creds"]["TABLEAU_PASSWORD"]   = cc4.text_input(
+                "Password", value=st.session_state["tbl_api_creds"]["TABLEAU_PASSWORD"], type="password"
+            )
+            ccc1, _ = st.columns([1,6])
+            if ccc1.button("Clear now", key=f"clear_tbl_creds_{cell_key}", use_container_width=True):
+                st.session_state["tbl_api_creds"] = {"TABLEAU_SERVER_URL":"","TABLEAU_SITE_ID":"","TABLEAU_USERNAME":"","TABLEAU_PASSWORD":""}
+                st.rerun()
+            st.caption("These values are kept only in memory for this run and never stored or logged. No PAT option is used.")
+        api_ready = all(bool(st.session_state["tbl_api_creds"].get(k)) for k in
+                        ["TABLEAU_SERVER_URL","TABLEAU_SITE_ID","TABLEAU_USERNAME","TABLEAU_PASSWORD"])
+
+    if is_cloud and provider == "powerbi":
+        with st.expander("Power BI API (WIP) — configuration preview"):
+            st.caption("This section is a placeholder. API actions are disabled in this build.")
+        api_ready = False  # actions disabled
 
     prog = st.empty(); step = st.empty(); grade_badge = st.empty(); outbox = st.empty()
 
     b1, b2 = st.columns([1,1])
-    run_clicked = b1.button("Run", key=f"run_{cell_key}", use_container_width=True, disabled=disable_actions)
-    ext_clicked = b2.button("Extract", key=f"ext_{cell_key}", type="primary", use_container_width=True, disabled=disable_actions)
+    run_disabled = disable_actions or (is_cloud and not api_ready)
+    ext_disabled = disable_actions or (is_cloud and not api_ready)
+    run_clicked = b1.button("Run", key=f"run_{cell_key}", use_container_width=True, disabled=run_disabled)
+    ext_clicked = b2.button("Extract", key=f"ext_{cell_key}", type="primary", use_container_width=True, disabled=ext_disabled)
+
+    if run_disabled and is_cloud:
+        st.caption("Enable by adding credentials in the expander above." if provider=="tableau" else "Power BI via API is WIP (disabled).")
 
     def _advance(i, n, txt): prog.progress(int((i/n)*100)); step.caption(txt)
 
-    def _finalize(summary_html: str, widgets: List[Dict], storage_prefix: str, full_image_url: str = ""):
+    def _finalize(summary_html: str, widgets: List[Dict], storage_prefix: str, full_image_url: str = "", method: str = "Public"):
         g = _summarize_grades(widgets)
-        grade_badge.success(f"Run Grade: **{g['run_grade']}**  •  Widgets: {g['total']}  •  A:{g['counts']['A']+g['counts']['A+']}  B:{g['counts']['B']}  C:{g['counts']['C']}  D:{g['counts']['D']}  F:{g['counts']['F']}")
+        grade_badge.success(
+            f"Run Grade: **{g['run_grade']}** • Widgets: {g['total']} • "
+            f"A:{g['counts']['A']+g['counts']['A+']}  B:{g['counts']['B']}  C:{g['counts']['C']}  D:{g['counts']['D']}  F:{g['counts']['F']}  •  Method: {method}"
+        )
         outbox.markdown(summary_html, unsafe_allow_html=True)
         st.session_state["kdh_status"] = {"headline": title, "summary": summary_html,
                                           "storage_prefix": storage_prefix, "full_image_url": full_image_url}
 
-    if (run_clicked or ext_clicked) and not disable_actions:
-        if not url.strip():
+    if (run_clicked or ext_clicked) and not (disable_actions or (is_cloud and not api_ready)):
+        url = (st.session_state.get(url_key) or "").strip()
+        if not url:
             st.warning("Paste a URL first."); return
         if provider == "powerbi" and "powerbi.com" not in url.lower():
             st.warning("This looks like a non-Power BI link. Consider the Tableau row.")
         if provider == "tableau" and "tableau" not in url.lower():
             st.warning("This looks like a non-Tableau link. Consider the Power BI row.")
+
         try:
             N = 9; _advance(1, N, "Validating & preparing…"); _log(f"[{title}] start")
             if run_clicked:
                 if provider == "powerbi" and not is_cloud:
-                    _advance(2, N, "Launching browser…"); res = _run_public_powerbi(url, session_id)
+                    _advance(2, N, "Launching browser…"); res = _run_public_powerbi(url, st.session_state["kdh_session"])
                     _advance(8, N, "Grading…")
                     summ = f"✅ **RUN complete** → `{res['storage_prefix']}` (bucket: {KDH_BUCKET})"
                     link = f"<div><a href='{res['full_signed']}' target='_blank'>Open full image</a></div>" if res.get("full_signed") else ""
-                    _finalize(summ+link, res.get("widgets", []), res["storage_prefix"], res.get("full_signed","")); _advance(9, N, "Done")
+                    _finalize(summ+link, res.get("widgets", []), res["storage_prefix"], res.get("full_signed",""), method="Public"); _advance(9, N, "Done")
                 elif provider == "tableau" and not is_cloud:
-                    _advance(2, N, "Launching browser…"); res = _run_public_tableau(url, session_id)
+                    _advance(2, N, "Launching browser…"); res = _run_public_tableau(url, st.session_state["kdh_session"])
                     _advance(8, N, "Grading…")
                     summ = f"✅ **RUN complete** → `{res['storage_prefix']}` (bucket: {KDH_BUCKET})"
                     link = f"<div><a href='{res['full_signed']}' target='_blank'>Open full image</a></div>" if res.get("full_signed") else ""
-                    _finalize(summ+link, res.get("widgets", []), res["storage_prefix"], res.get("full_signed","")); _advance(9, N, "Done")
+                    _finalize(summ+link, res.get("widgets", []), res["storage_prefix"], res.get("full_signed",""), method="Public"); _advance(9, N, "Done")
                 else:  # Tableau Cloud RUN (API)
-                    tbl_ok_local = all([
-                        bool(_sget("TABLEAU_SERVER_URL")), bool(_sget("TABLEAU_SITE_ID")),
-                        bool(_sget("TABLEAU_USERNAME")), bool(_sget("TABLEAU_PASSWORD")),
-                    ])
-                    if not tbl_ok_local:
-                        _finalize("⚠️ Tableau API creds missing (TABLEAU_SERVER_URL, SITE_ID, USERNAME, PASSWORD).", [], "", ""); return
-                    _advance(2, N, "Signing in to Tableau Cloud…"); res = _extract_cloud_tableau(url=url, session_prefix=f"tableau_{_nowstamp()}")
+                    creds = st.session_state["tbl_api_creds"].copy()
+                    with _temp_tableau_env(creds):
+                        _advance(2, N, "Signing in to Tableau Server/Cloud…")
+                        res = _extract_cloud_tableau(url=url, session_prefix=f"tableau_{_nowstamp()}")
                     widgets = res.get("widgets", []); storage_prefix = res.get("storage_prefix") or res.get("session_folder","")
                     _advance(8, N, "Grading…"); summ = f"✅ **RUN (API) complete** → `{storage_prefix}` (bucket: {KDH_BUCKET})"
-                    _finalize(summ, widgets, storage_prefix, ""); _advance(9, N, "Done")
+                    _finalize(summ, widgets, storage_prefix, "", method="Via API"); _advance(9, N, "Done")
+
             if ext_clicked:
                 sess = f"{provider}_{_nowstamp()}"
                 if provider == "powerbi" and not is_cloud:
-                    _advance(2, N, "Launching browser…"); res = _extract_public_powerbi(url, sess)
+                    _advance(2, N, "Launching browser…"); res = _extract_public_powerbi(url, sess); method = "Public"
                 elif provider == "tableau" and not is_cloud:
-                    _advance(2, N, "Launching browser…"); res = _extract_public_tableau(url, sess)
+                    _advance(2, N, "Launching browser…"); res = _extract_public_tableau(url, sess); method = "Public"
                 else:
-                    tbl_ok_local = all([
-                        bool(_sget("TABLEAU_SERVER_URL")), bool(_sget("TABLEAU_SITE_ID")),
-                        bool(_sget("TABLEAU_USERNAME")), bool(_sget("TABLEAU_PASSWORD")),
-                    ])
-                    if not tbl_ok_local:
-                        _finalize("⚠️ Tableau API creds missing (TABLEAU_SERVER_URL, SITE_ID, USERNAME, PASSWORD).", [], "", ""); return
-                    _advance(2, N, "Signing in to Tableau Cloud…"); res = _extract_cloud_tableau(url=url, session_prefix=sess)
+                    creds = st.session_state["tbl_api_creds"].copy()
+                    with _temp_tableau_env(creds):
+                        _advance(2, N, "Signing in to Tableau Server/Cloud…"); res = _extract_cloud_tableau(url=url, session_prefix=sess)
+                    method = "Via API"
                 _advance(8, N, "Grading…"); widgets = res.get("widgets", []); storage_prefix = res.get("storage_prefix") or res.get("session_folder","")
                 summ = f"✅ **EXTRACT complete** → `{storage_prefix}` (widgets: {len(widgets)})"
-                _finalize(summ, widgets, storage_prefix, ""); _advance(9, N, "Done")
+                _finalize(summ, widgets, storage_prefix, "", method=method); _advance(9, N, "Done")
+
         except Exception as e:
-            tb = traceback.format_exc(); st.error(f"Failed: {e}\n\n```traceback\n{tb}\n```"); _log(f"ERROR: {e}")
+            tb = traceback.format_exc()
+            st.error(f"Failed: {e}\n\n```traceback\n{tb}\n```")
+            _log(f"ERROR: {e}")
 
 # ───────────── Rows with vertical & horizontal separators ────────────────────
 
-# Row: Power BI
-lab, pub, sep, api = st.columns([0.8, 2, 0.07, 2])
-lab.markdown("#### Power BI")
-with pub:
-    st.markdown("<div class='cell-pad'>", unsafe_allow_html=True)
-    render_cell("pub_pbi", " ", is_cloud=False, provider="powerbi")
-    st.markdown("</div>", unsafe_allow_html=True)
+# Headers (Public | Via API)
+lab, hdr_pub, sep, hdr_api_col = st.columns([0.8, 2, 0.07, 2])
+lab.write("")
+
+# Public header
+hdr_pub.markdown(
+    """
+    <div style='font-size:1.25rem;font-weight:600;line-height:1.6;display:flex;align-items:flex-start;'>
+        Public
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Info banner spanning both
+st.markdown(
+    """
+    <div style="
+        background-color:#EFF6FF;
+        border:1px solid #BFDBFE;
+        border-radius:6px;
+        padding:8px 12px;
+        font-size:14px;
+        font-family: 'Inter', sans-serif;
+        color:#1E3A8A;
+        margin:.5rem 0;
+    ">
+        ℹ️ API mode requires <b>Tableau Server/Cloud</b> with an account that has
+        <b>API export permissions</b>. Tableau Public dashboards don’t support this. 
+        This site does <b>NOT</b> store any of your information. 
+        The <b>video snippet</b> above shows a sample of how this works.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Separator between columns
 with sep:
-    st.markdown("<div class='vline-wrap'><div class='vline'></div></div>", unsafe_allow_html=True)
-with api:
-    st.markdown("<div class='cell-pad'>", unsafe_allow_html=True)
-    # 👇 Explicit WIP for Cloud • Power BI
-    render_cell(
-        "api_pbi", " ", is_cloud=True, provider="powerbi",
-        disable_actions=True,
-        wip_hint="Power BI via API is Work In Progress."
+    st.markdown(
+        "<div style='display:flex;align-items:stretch;justify-content:center;'>"
+        "<div style='width:1px;background:#E2E8F0;min-height:32px;'></div>"
+        "</div>",
+        unsafe_allow_html=True
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# Horizontal separator
-st.markdown("<div class='table-hline'></div>", unsafe_allow_html=True)
-
-# Row: Tableau
-lab2, pub2, sep2, api2 = st.columns([0.8, 2, 0.07, 2])
-lab2.markdown("#### Tableau")
-with pub2:
-    st.markdown("<div class='cell-pad'>", unsafe_allow_html=True)
-    render_cell("pub_tbl", " ", is_cloud=False, provider="tableau")
-    st.markdown("</div>", unsafe_allow_html=True)
-with sep2:
-    st.markdown("<div class='vline-wrap'><div class='vline'></div></div>", unsafe_allow_html=True)
-with api2:
-    st.markdown("<div class='cell-pad'>", unsafe_allow_html=True)
-    render_cell("api_tbl", " ", is_cloud=True, provider="tableau")
-    st.markdown("</div>", unsafe_allow_html=True)
+# Via API header
+with hdr_api_col:
+    st.markdown(
+        """
+        <div style='display:flex;gap:.5rem;align-items:flex-start;'>
+          <div style='font-size:1.25rem;font-weight:600;line-height:1.6;'>Via API</div>
+          <span style='display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;line-height:18px;border:1px dashed #CBD5E1;background:#F8FAFC;color:#6B7280;white-space:nowrap;'>
+            Power BI is WIP
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # Bottom border
-st.markdown("<div class='table-hline'></div>", unsafe_allow_html=True)
+st.markdown(
+    "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
+    unsafe_allow_html=True
+)
 
+# Row: Power BI (row-level sample button — fills BOTH cells BEFORE inputs)
+lab, pub, sep, api = st.columns([0.8, 2, 0.07, 2])
+lab.markdown("#### Power BI")
+if st.button("Use Sample URL (Power BI)", key="use_sample_row_pbi"):
+    st.session_state["url_pub_pbi"] = SAMPLE_URLS["powerbi"]
+    st.session_state["url_api_pbi"] = SAMPLE_URLS["powerbi"]
+    st.rerun()
+with pub:
+    render_cell("pub_pbi", "Public", is_cloud=False, provider="powerbi")
+with sep:
+    st.markdown(
+        "<div style='display:flex;align-items:stretch;justify-content:center;'><div style='width:1px;background:#E2E8F0;'></div></div>",
+        unsafe_allow_html=True
+    )
+with api:
+    render_cell(
+        "api_pbi", "Via API (WIP)", is_cloud=True, provider="powerbi",
+        disable_actions=True,
+        wip_hint="Power BI via API is Work In Progress (buttons disabled)."
+    )
+st.markdown(
+    "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
+    unsafe_allow_html=True
+)
+
+# Row: Tableau (row-level sample button — fills BOTH cells BEFORE inputs)
+lab2, pub2, sep2, api2 = st.columns([0.8, 2, 0.07, 2])
+lab2.markdown("#### Tableau")
+if st.button("Use Sample URL (Tableau)", key="use_sample_row_tbl"):
+    st.session_state["url_pub_tbl"] = SAMPLE_URLS["tableau"]
+    st.session_state["url_api_tbl"] = SAMPLE_URLS["tableau"]
+    st.rerun()
+with pub2:
+    render_cell("pub_tbl", "Public", is_cloud=False, provider="tableau")
+with sep2:
+    st.markdown("<div style='display:flex;align-items:stretch;justify-content:center;'><div style='width:1px;background:#E2E8F0;'></div></div>", unsafe_allow_html=True)
+with api2:
+    render_cell("api_tbl", "Via API", is_cloud=True, provider="tableau")
+
+# Bottom border + Status dock
+st.markdown("<div style='height:1px;background:#E2E8F0;margin:.5rem 0 0 0;'></div>", unsafe_allow_html=True)
 st.divider()
 
-# ───────────────────────────── Global Status Dock ────────────────────────────
 st.markdown("### Run Status")
 s = st.session_state["kdh_status"]
 if s["headline"]:

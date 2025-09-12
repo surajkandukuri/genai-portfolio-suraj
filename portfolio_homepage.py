@@ -27,7 +27,7 @@ if sys.platform.startswith("win"):
 # ---- Landing page content for the portfolio home ----
 def landing():
     st.title("AI AGENTS")
-    st.caption("Cross-Platform BI • Provisioning • Agentic Workflows • Enterprise Data Governance")
+    st.caption("These are implementable AI agents — designed to work today and easily extend into production-grade systems.")
 
     st.markdown("""
     ## Solving Common Enterprise Data Challenges
@@ -130,6 +130,8 @@ console    = st.Page("pages/2_admin.py",                   title="Console",     
 reports    = st.Page("pages/3_Reports.py",                 title="Reports",         icon=":material/insights:")
 artifacts  = st.Page("pages/4_Artifacts.py",               title="Artifacts",       icon=":material/archive:")
 
+#Certificates 
+certificates_learning = st.Page("pages/55_certificates_learning.py",title="Certificates", icon=":material/workspace_premium:")
 # Account
 logout     = st.Page("pages/9_Logout.py",                  title="Logout",          icon=":material/logout:")
 
@@ -140,6 +142,7 @@ nav = st.navigation(
         "ProvisionAgent": [prov_agent, provision,console, reports, artifacts],
         "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_runandextract, kpi_drift_parseandcompare, kpi_drift_report,kpi_drift_documentation],
         #"Admin · ProvisionalAgent": [console, reports, artifacts],
+        "Certificates":[certificates_learning],
         "Account": [logout],
     },
     position="sidebar",
