@@ -1,8 +1,0 @@
-{
-  "team_env": "centralized_team_dev",
-  "env_name": "dev",
-  "runtime": "flask",
-  "selection_key": 12,
-  "table_prefix": "centralized_team_dev_",
-  "storage_prefix": "centralized_team_dev/"
-}
