@@ -123,13 +123,13 @@ kpi_drift  = st.Page("kpidrifthunteragent_homepage.py",    title="KPI Drift Hunt
 kpi_drift_runandextract   = st.Page("pages/23_kpidrift_runandextract.py",  title="Run and Extract",  icon=":material/play_circle:")
 kpi_drift_parseandcompare = st.Page("pages/24_kpidrift_parseandcompare.py",title="Parse and Compare",icon=":material/compare_arrows:")
 kpi_drift_report          = st.Page("pages/26_kpidrift_reports.py",        title="Report",           icon=":material/insights:")
-kpi_drift_documentation         = st.Page("pages/25_kpidrift_documentation.py",        title="Documentation",           icon=":material/library_books:")
+kpi_drift_documentation         = st.Page("pages/25_kpidrift_psuedocode.py",        title="PsuedoCode",           icon=":material/library_books:")
 
 # Admin children
 console    = st.Page("pages/2_admin.py",                   title="Console",         icon=":material/terminal:")
 reports    = st.Page("pages/3_Reports.py",                 title="Reports",         icon=":material/insights:")
 artifacts  = st.Page("pages/4_Artifacts.py",               title="Artifacts",       icon=":material/archive:")
-
+psuedocode = st.Page("pages/5_psuedocode.py", title="PsuedoCode",  icon=":material/library_books:")
 #Certificates 
 certificates_learning = st.Page("pages/55_certificates_learning.py",title="Certificates", icon=":material/workspace_premium:")
 # Account
@@ -139,7 +139,7 @@ logout     = st.Page("pages/9_Logout.py",                  title="Logout",      
 nav = st.navigation(
     {
         "Home": [home],
-        "ProvisionAgent": [prov_agent, provision,console, reports, artifacts],
+        "ProvisionAgent": [prov_agent, provision,console, reports, artifacts,psuedocode],
         "KPI Drift Hunter Agent": [kpi_drift, kpi_drift_runandextract, kpi_drift_parseandcompare, kpi_drift_report,kpi_drift_documentation],
         #"Admin · ProvisionalAgent": [console, reports, artifacts],
         "Certificates":[certificates_learning],

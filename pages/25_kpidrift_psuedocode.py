@@ -17,7 +17,7 @@ except Exception:
 
 st.set_page_config(page_title="KPI Drift Hunter — Documentation", page_icon="📖", layout="wide")
 
-st.title("📖 KPI Drift Hunter — Documentation")
+st.title("📖 KPI Drift Hunter — PsuedoCode")
 st.caption("Access requires a valid email. Your email is used only for access logs and follow-ups about this demo.")
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

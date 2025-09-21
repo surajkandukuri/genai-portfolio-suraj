@@ -10,6 +10,14 @@ from typing import Dict, List, Tuple, Optional
 import streamlit as st
 from supabase import create_client, Client
 
+# ---- Walkthrough helpers (safe no-ops if the helper module isn't present)
+try:
+    from portfolio_walkthrough import register, mount, anchor
+except Exception:
+    def register(*a, **k): ...
+    def mount(*a, **k): ...
+    def anchor(*a, **k): ...
+
 # --- Capture providers (RUN) -------------------------------------------------
 from provisioning.a2_kpidrift_capture.a2_kpidrift_powerbi import capture_powerbi
 from provisioning.a2_kpidrift_capture.a2_kpidrift_tableau import capture_tableau
@@ -105,7 +113,6 @@ def _demo_video_url() -> str:
     # Format for Supabase public files:
     # https://<PROJECT>.supabase.co/storage/v1/object/public/<bucket>/<path/to/file>
     return "https://<YOUR_PROJECT>.supabase.co/storage/v1/object/public/kpidrifthunter/assets/kpi_drift_demo.mp4"
-
 
 
 # ───────────────────────────── Safe screengrab upsert ────────────────────────
@@ -258,8 +265,37 @@ def _temp_tableau_env(creds: Dict[str, str]):
 
 # ─────────────────────────────── UI rendering ────────────────────────────────
 st.set_page_config(page_title="KPI Drift — Run & Extract", page_icon="🧩", layout="wide")
+
+# Register + mount walkthrough tips (tour button hidden on this page)
+register(
+    "kpi_run_extract",
+    tips={
+        "hero": "Run and Extract widgets from public BI dashboards or via server APIs.",
+        "public": "Public mode uses a browser capture of publicly shared dashboards.",
+        "api": "Via API connects to server/cloud for private dashboards (with creds).",
+        "pbi-row": "Power BI row — paste a public /view? link or click Use Sample URL.",
+        "tbl-row": "Tableau row — paste a Public or Server/Cloud view URL.",
+        "run-btn": "Run = capture a full visual and save artifacts to storage.",
+        "ext-btn": "Extract = parse visible widgets and normalize them into tidy KPI rows.",
+        "status": "Run Status summarizes results and gives the signed image link.",
+    },
+)
+mount("kpi_run_extract", show_tour_button=False)
+
 st.title("🧩 KPI Drift — Run & Extract")
 st.caption("2×2 grid: Public / Via API × Power BI / Tableau. Every box supports Run & Extract.")
+anchor("hero")
+
+# Small quick-start helper
+with st.expander("Quick start", expanded=False):
+    st.markdown(
+        """
+1) Click **Use Sample URL** to load a demo link.  
+2) Click **Run** to capture a full image, or **Extract** to list parsed widgets.  
+3) Review **Run Status** below (contains signed link when available).  
+4) For private dashboards, use **Via API** and provide server credentials.
+        """
+    )
 
 # Examples for the sample buttons
 SAMPLE_URLS: Dict[str, str] = {
@@ -280,12 +316,9 @@ This tool lets you capture and extract widgets from any public **Power BI** or *
 """
     )
 with right:
-    VIDEO_URL = _demo_video_url()  # must return a PUBLIC https mp4
-    st.video("https://cdsmbjgvdgmckgjxzpqr.supabase.co/storage/v1/object/sign/kpidrifthunter/assets/kpi_drift_demo.mp4"
-             ,autoplay=True,
-              muted=True) # Replace with your YouTube video URL
-   
-
+    VIDEO_URL = _demo_video_url()  # must return a PUBLIC https mp4 (your code uses a signed link below)
+    st.video("https://cdsmbjgvdgmckgjxzpqr.supabase.co/storage/v1/object/sign/kpidrifthunter/assets/kpi_drift_demo.mp4",
+             autoplay=True, muted=True)
 
 # ───────────── Header row: Public | Via API with info banner ─────────────
 lab, hdr_pub, sep, hdr_api_col = st.columns([0.8, 2, 0.07, 2])
@@ -300,6 +333,7 @@ hdr_pub.markdown(
     """,
     unsafe_allow_html=True
 )
+anchor("public")
 
 # Inline info banner (above Via API)
 st.markdown(
@@ -343,6 +377,7 @@ with hdr_api_col:
         """,
         unsafe_allow_html=True
     )
+anchor("api")
 
 st.markdown(
     "<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'></div>",
@@ -408,6 +443,13 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
     ext_disabled = disable_actions or (is_cloud and not (api_ready or force_enable))
     run_clicked = b1.button("Run", key=f"run_{cell_key}", use_container_width=True, disabled=run_disabled)
     ext_clicked = b2.button("Extract", key=f"ext_{cell_key}", type="primary", use_container_width=True, disabled=ext_disabled)
+
+    # Tiny tip icons on the same row as the buttons
+    tr = st.columns(2)
+    with tr[0]:
+        anchor("run-btn")
+    with tr[1]:
+        anchor("ext-btn")
 
     if run_disabled and is_cloud and provider == "tableau":
         st.caption("Enable by adding credentials in the expander above (or use the sample URL button to demo).")
@@ -496,6 +538,7 @@ def render_cell(cell_key: str, title: str, is_cloud: bool, provider: str,
 # Row: Power BI
 lab, pub, sep, api = st.columns([0.8, 2, 0.07, 2])
 lab.markdown("#### Power BI")
+anchor("pbi-row")
 if st.button("Use Sample URL (Power BI)", key="use_sample_row_pbi"):
     st.session_state["url_pub_pbi"] = SAMPLE_URLS["powerbi"]
     st.session_state["url_api_pbi"] = SAMPLE_URLS["powerbi"]
@@ -519,6 +562,7 @@ st.markdown("<div style='height:1px;background:#E2E8F0;margin:.5rem 0 1rem 0;'><
 # Row: Tableau  (sample button force-enables Via API run/extract)
 lab2, pub2, sep2, api2 = st.columns([0.8, 2, 0.07, 2])
 lab2.markdown("#### Tableau")
+anchor("tbl-row")
 if st.button("Use Sample URL (Tableau)", key="use_sample_row_tbl"):
     st.session_state["url_pub_tbl"] = SAMPLE_URLS["tableau"]
     st.session_state["url_api_tbl"] = SAMPLE_URLS["tableau"]
@@ -539,6 +583,7 @@ st.markdown("<div style='height:1px;background:#E2E8F0;margin:.5rem 0 0 0;'></di
 st.divider()
 
 st.markdown("### Run Status")
+anchor("status")
 s = st.session_state["kdh_status"]
 if s["headline"]:
     st.write(f"**Latest:** {s['headline']}")
@@ -552,3 +597,21 @@ if s["summary"]:
 st.caption("Recent Log (tail)")
 log_tail = "\n".join(st.session_state["kdh_log"][-30:])
 st.code(log_tail or "(no log yet)", language="text")
+
+# ─────────── Why this is Agentic AI (non-revealing) ───────────
+with st.expander("Why this is Agentic AI", expanded=False):
+    st.markdown(
+        """
+**One-liner:** The agent reads dashboards like a human, extracts KPI series, and cross-checks them across BI tools—autonomously.
+
+**Agent loop:** **Plan → Capture → Parse → Compare → Explain → Refine**
+
+- **Goal-driven planning** – Given report links, it decides how to load, when to capture, and what to inspect.  
+- **Runtime tool use (abstracted)** – Captures visuals, performs visual + structural extraction, and writes normalized KPI rows and artifacts to secure storage.  
+- **Closed-loop verification** – Quality checks, retries/backoff, and similarity tests flag drift and reduce noise.  
+- **Human-in-the-Loop mapping** – When unsure, you can **pair two widgets** (e.g., across BI tools) and **mark them equivalent** or **override labels/units/aggregation**.  
+  The agent **learns** from these mappings and reuses them on future runs.  
+- **Policy-aware guardrails** – Allow-lists, rate limiting, and full audit trail.  
+- **Explainable outputs** – Visual evidence, normalized data, and a drift summary so humans can verify the reasoning.
+        """
+    )

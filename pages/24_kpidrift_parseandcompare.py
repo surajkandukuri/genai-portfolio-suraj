@@ -1,5 +1,12 @@
 # pages/24_kpidrift_parseandcompare.py
-from __future__ import annotations
+# Walkthrough / hover tips (safe no-ops if helper not present)
+try:
+    from portfolio_walkthrough import register, mount, anchor
+except Exception:
+    def register(*a, **k): ...
+    def mount(*a, **k): ...
+    def anchor(*a, **k): ...
+
 
 import os, re, json, uuid, base64, time, math
 from datetime import datetime, timezone
@@ -394,7 +401,22 @@ def collapse_all_debug():
 # UI
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="KPI Drift — Parse → Map → Compare", page_icon="📊", layout="wide")
+# Register + mount page tips (tour button hidden)
+register(
+    "kpi_parse_map_compare",
+    tips={
+        "parse":    "Parse widgets from a chosen session (from Run/Extract). Creates a normalized list ready for mapping. No DB writes here.",
+        "map-save": "Human-in-the-loop mapping. Pick LEFT/RIGHT sessions, type widget numbers to pair, then Persist mapping (SCD-2). SCD-2 adds a new version, doesn’t overwrite.",
+        "compare":  "Pick a saved pair and see side-by-side comparison with drift checks (value/label/format/trend).",
+    },
+)
+mount("kpi_parse_map_compare", show_tour_button=False)
+
+
+
 st.title("📊 KPI Drift — Parse → Map → Compare")
+anchor("hero")
+
 st.caption("Sequential flow: **① Parse**, then **② Map (only parsed widgets)**, then **③ Compare by saved pairs**.")
 
 hdr_c1, hdr_c2, hdr_c3 = st.columns([1, 0.16, 0.16])
@@ -411,6 +433,7 @@ with hdr_c3:
 # ① PARSE  (MUST happen first)
 # =============================================================================
 st.header("① Parse")
+anchor("parse")  # ← single hover tip for this section
 sessions = load_recent_sessions()
 left, right = st.columns([1.6, 2.4])
 session_choice = left.selectbox("Session (derived from storage path)", options=["— choose —"] + sessions, index=0)
@@ -630,7 +653,7 @@ if not _any_extract:
 #     - "Fetch mapping from database" pulls SCD-2 current rows
 # =============================================================================
 st.header("② Map (only parsed widgets) & Save (SCD-2)")
-
+anchor("map-save")
 st.caption(
     "Pick two sessions. Only widgets with a parsed JSON appear here. "
     "Type the same **Pair #** on both sides, then click **Persist mapping**. "
@@ -848,7 +871,7 @@ if persist_clicked:
 # ③ COMPARE — only on mapped pairs (SCD-2 current rows)
 # =============================================================================
 st.header("③ Compare by Pair (SCD-2)")
-
+anchor("compare")
 curr_pairs = load_current_pairs()
 if not curr_pairs:
     st.info("No current pairs in SCD-2 table. Save mappings above in **② Map**.")
