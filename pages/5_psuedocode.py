@@ -1,63 +1,82 @@
 # pages/5_psuedocode.py
-# ProvisionAgent — PsuedoCode (Email-gated, simple English overview)
+# ProvisionAgent — PsuedoCode (Email-gated; logs to public.kdh_doc_access_log)
 
 from __future__ import annotations
-import os, re, datetime as dt, textwrap
+import os, re, datetime as dt, textwrap, logging
 import streamlit as st
 
-# Optional: Supabase logging (no-op if secrets/env not set)
+st.set_page_config(page_title="ProvisionAgent — PsuedoCode", page_icon="📐", layout="wide")
+st.caption(f"Loaded from: {__file__}")
+
+# ─────────────────────────── Logging ───────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+LOG = logging.getLogger("prov.pseudocode")
+
+# ───────────────────────────── Config helpers ─────────────────────────────
+def sget(*keys, default=None):
+    """Get config from Streamlit secrets (preferred) or env vars."""
+    for k in keys:
+        try:
+            if k in st.secrets:
+                return st.secrets[k]
+        except Exception:
+            pass
+        v = os.getenv(k)
+        if v:
+            return v
+    return default
+
+SUPABASE_URL = sget("SUPABASE_URL", "SUPABASE__URL")
+SUPABASE_KEY = sget(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE__SUPABASE_SERVICE_KEY",
+)
+DOC_ACCESS_TABLE = "kdh_doc_access_log"  # <-- same table as KPI Drift page
+
+# ───────────────────────────── Supabase client ────────────────────────────
 try:
     from supabase import create_client, Client
 except Exception:
     create_client = None
     Client = None  # type: ignore
 
-st.set_page_config(page_title="ProvisionAgent — PsuedoCode", page_icon="📐", layout="wide")
+@st.cache_resource
+def get_sb() -> Client | None:
+    if not create_client:
+        return None
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception:
+        return None
 
-st.title("📐 ProvisionAgent — PsuedoCode")
-st.caption("Access requires a valid email. Your email is used only for access logs and follow-ups about this demo.")
+sb = get_sb()
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# ───────────────────────────── Utils ──────────────────────────────────────
 EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.I)
-
 def _valid_email(e: str) -> bool:
     return bool(EMAIL_RE.match((e or "").strip()))
 
-def _get_sb() -> Client | None:
-    """Create Supabase client if secrets are available; otherwise return None."""
-    if not create_client:
-        return None
-    url = os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL", "")
-    key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")
-        or st.secrets.get("SUPABASE_ANON_KEY", "")
-    )
-    if not url or not key:
-        return None
-    try:
-        return create_client(url, key)
-    except Exception:
-        return None
-
 def _log_access(email: str, ok: bool, reason: str = "") -> None:
-    """Best-effort access log; never blocks the page."""
-    sb = _get_sb()
+    """Write to public.kdh_doc_access_log (best-effort, non-blocking)."""
     if not sb:
         return
     row = {
-        "email": (email or None),
-        "granted": ok,
-        "reason": (reason or None),
-        "page": "provisionagent_psuedocode",
-        "ts_utc": dt.datetime.utcnow().isoformat(),
+        "email": (email or "").strip() or None,
+        "granted": bool(ok),
+        "reason": reason or None,
+        "page": "provisionagent_psuedocode",        # page tag
+        "ts_utc": dt.datetime.utcnow().isoformat(), # DB also has default now()
         "user_agent": st.session_state.get("_user_agent"),
     }
-    table = os.getenv("DOC_ACCESS_TABLE", "prov_doc_access_log")
     try:
-        sb.table(table).insert(row).execute()
-    except Exception:
-        pass
+        # Force the public schema and exact table
+        sb.postgrest.schema("public").from_(DOC_ACCESS_TABLE).insert(row).execute()
+    except Exception as e:
+        LOG.warning("Access log insert failed: %s", e)
 
 # Capture UA once per session (optional)
 if "_user_agent" not in st.session_state:
@@ -66,7 +85,11 @@ if "_user_agent" not in st.session_state:
     except Exception:
         st.session_state["_user_agent"] = None
 
-# ── Email gate ───────────────────────────────────────────────────────────────
+# ───────────────────────────── UI ─────────────────────────────────────────
+st.title("📐 ProvisionAgent — PsuedoCode")
+st.caption("Access requires a valid email. Your email is used only for access logs and follow-ups about this demo.")
+
+# Email gate
 if "prov_access_granted" not in st.session_state:
     st.session_state["prov_access_granted"] = False
     st.session_state["prov_access_email"] = ""
@@ -90,7 +113,7 @@ with st.container(border=True):
             _log_access(email.strip(), ok=True)
             st.success("Access granted for this session.")
         else:
-            _log_access(email.strip(), ok=False, reason="invalid_email")
+            _log_access((email or "").strip(), ok=False, reason="invalid_email")
             st.error("Please enter a valid email address.")
 
 if not st.session_state["prov_access_granted"]:
@@ -100,7 +123,7 @@ if not st.session_state["prov_access_granted"]:
 st.success(f"Welcome, {st.session_state['prov_access_email']}! Access granted.")
 st.divider()
 
-# ── Simple English overview (no expanders) ───────────────────────────────────
+# ───────────────────────────── Content ────────────────────────────────────
 st.markdown("### What the centralized team does")
 st.markdown(
     """
@@ -152,50 +175,25 @@ st.code(
         """
         function provision_flow(user):
             assert user.is_centralized_team
-
-            # Step 1–2: pick target env + stack
             env   = select(['DEV','QA','PROD'])
             stack = select(['DJANGO','FASTAPI','STREAMLIT','.NET','PYTHON'])
-
-            # Step 3: choose artifacts (one of each)
-            db      = choose('Database')
-            secrets = choose('Secrets Manager')
-            models  = choose('AI Models')
-            storage = choose('Storage')
-
-            # Step 4: (optional) save selection for audit/history
-            selection_key = db_insert('team_selection_batch', {
-                team_id, environment_id, target_runtime_id, by=user.username
-            })
+            db      = choose('Database'); secrets = choose('Secrets Manager')
+            models  = choose('AI Models'); storage = choose('Storage')
+            selection_key = db_insert('team_selection_batch', {...})
             for each (type, pick) in {db,secrets,models,storage}:
                 db_insert('team_selection_detail', { selection_key, type, pick })
-
-            # Step 5: PROVISION NOW
             team_env = slug(team_name) + '_' + slug(env)
             make_folder('apps/' + team_env)
-
-            # write minimal app + docker bits
             write('apps/team_env/app.py', hello_streamlit_app)
             write('apps/team_env/Dockerfile', dockerfile_text)
             write('apps/team_env/docker-compose.yml', compose_for(env, team_env))
-            write('apps/team_env/.env', '')               # empty by default
+            write('apps/team_env/.env', '')
             write('apps/team_env/README.md', run_notes)
-            write helpers: enable_agents.sh/.ps1, disable_agents.sh/.ps1
-
-            # zip the folder and upload to Supabase Storage
             zip_path = zipdir('apps/' + team_env, name=team_env + '.zip')
             key = f"provisional_agent/{team_env}_{timestamp()}/{team_env}.zip"
             storage.upload(bucket='provisional_agent', key=key, file=zip_path, upsert=True)
-
-            # mark batch as provisioned
             db_update('team_selection_batch', selection_key, { provision_done_ind: 'Y' })
-
-            # show run commands to user
-            return {
-                repo_path: 'apps/' + team_env,
-                docker_hint: 'docker compose up -d',
-                storage_key: key
-            }
+            return { repo_path: 'apps/' + team_env, docker_hint: 'docker compose up -d', storage_key: key }
         """
     ),
     language="text",
@@ -206,12 +204,11 @@ st.markdown(
     """
 - This page uses **email gating** only for demo throttling.  
   For production: add SSO or OTP, role checks, and RLS on DB tables.
-- Provisioning is **idempotent**: if you re-run, we overwrite files and keep one clear audit trail.
-- Secrets never show in the UI. They go to `.env` or your chosen Secrets Manager.
+- Provisioning is **idempotent** and auditable.
+- Secrets never show in the UI.
 """
 )
 
-# Optional quick links (if file-based navigation is enabled in your app)
 try:
     st.divider()
     cols = st.columns(3)

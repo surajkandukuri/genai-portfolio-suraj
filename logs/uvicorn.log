@@ -90,3 +90,7 @@ INFO:     127.0.0.1:40270 - "GET /gateway/health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:45816 - "GET /checks/health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:45824 - "GET /agents/postprovision/try HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54944 - "GET /agents/sample-menu?cuisine=Italian HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [9588]
